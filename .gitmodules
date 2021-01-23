@@ -1,0 +1,3 @@
+[submodule "ez-ephys"]
+	path = ez-ephys
+	url = ./ez-ephys
