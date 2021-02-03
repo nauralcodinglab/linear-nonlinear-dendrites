@@ -1,3 +1,3 @@
 [submodule "ez-ephys"]
 	path = ez-ephys
-	url = ./ez-ephys
+	url = https://github.com/efharkin/ez-ephys.git
