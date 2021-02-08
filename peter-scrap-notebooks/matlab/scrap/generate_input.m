@@ -15,7 +15,7 @@ input_signal = transpose([t; output]);
 
 % model parameters
 soma_threshold = 0.25; % threshold of soma before it spikes
-peaks = [0.5 1.0 1.5 2.0 2.5]; % peak amplitude of alpha signal
+peaks = [0.5 1.0 1.5 2.0]; % peak amplitude of alpha signal
 
 % soma nonlinear parameters
 pulse_width_ms = 1;
