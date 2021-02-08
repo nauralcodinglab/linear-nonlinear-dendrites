@@ -56,11 +56,7 @@ for i = 1:length(peaks)
     Vd_nl_time = Vd_nl.Values.Time(:);
     Vd_nl_vals = Vd_nl.Values.Data(:);
     
-    trial_output(i).peak = peak;
-    trial_output(i).time = Vd_time;
-    trial_output(i).Vd = Vd_vals;
-    trial_output(i).Vs = Vs_vals;
-    trial_output(i).input = input_vals;
+    trial_output = [input_vals; Vd_vals; Vs_vals; ]
 
 %     hold on
 %     figure();
@@ -70,7 +66,8 @@ for i = 1:length(peaks)
 %     hold off
 end
 
-save('output.mat', 'trial_output');
-
+% export data
+output.time = Vd_time;
+output.trials = trials;
 
 
