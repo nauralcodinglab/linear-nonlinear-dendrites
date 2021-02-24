@@ -81,6 +81,12 @@ for i = 1:length(params)
     
     Vd_lin = signal_logs.getElement('Vd_lin');
     Vd_lin_vals = Vd_lin.Values.Data(:);
+    
+    Vs_lin = signal_logs.getElement('Vs_lin');
+    Vs_lin_vals = Vs_lin.Values.Data(:);
+    
+    Vs_nl = signal_logs.getElement('Vs_nl');
+    Vs_nl_vals = Vs_nl.Values.Data(:);
 
     Vd_time = Vd.Values.Time(:);
     Vd_vals = Vd.Values.Data(:);
@@ -93,6 +99,8 @@ for i = 1:length(params)
     out_mat(i).Vs = Vs_vals;
     out_mat(i).input = input.Values.Data(:);
     out_mat(i).Vd_lin = Vd_lin_vals;
+    out_mat(i).Vs_lin = Vs_lin_vals;
+    out_mat(i).Vs_nl = Vs_nl_vals;
     
     par = params(i);
     out_mat(i).peak = par.peak;
