@@ -125,7 +125,7 @@ input_signal_pane = dbc.Card(
                 dcc.Slider(
                     id='input-peak-slider',
                     min=1,
-                    max=4,
+                    max=15,
                     step=0.1,
                     value=1,
                     updatemode='drag',
@@ -324,7 +324,7 @@ def compute_blocker_graph(peak, na_loc, na_sensit, na_gain, ca_loc, ca_sensit, c
   min_intensity = 0
   max_intensity = 15
 
-  intensities = np.arange(min_intensity, max_intensity, 0.1)
+  intensities = np.arange(min_intensity, max_intensity, 0.4)
   peaks_control = np.zeros(len(intensities))
   peaks_blocked = np.zeros(len(intensities))
 
@@ -388,6 +388,7 @@ def compute_blocker_graph(peak, na_loc, na_sensit, na_gain, ca_loc, ca_sensit, c
     ]
 )
 def update_input_figure(peak):
+    print('hello')
     layout = go.Layout(
         title='EPSP Input',
         yaxis=dict(

@@ -18,12 +18,12 @@ t_end_ms = 50; % length of simulink simulatio in ms
 t_step = 0.01; % max step size of solver
 
 % multi simulation parameters
-peak_arr = 1:0.05:2; % peak amplitude of alpha signal
-loc_arr = 1.9:0.1:2.1; % loc of sigmoid
+peak_arr = 0:0.05:3; % peak amplitude of alpha signal
+loc_arr = 1.4:0.1:2.3; % loc of sigmoid
 gain_arr = 3:1:3; % gain of sigmoid
-sensit_arr = 0.3:0.01:0.35; % sensit of sigmoid
-pulse_height_arr = 1.5:0.5:1.5; % pulse height
-soma_thresh_arr = 0.23:0.01:0.25; % soma threshold
+sensit_arr = 0.2:0.01:0.3; % sensit of sigmoid
+pulse_height_arr = 2:0.5:2; % pulse height
+soma_thresh_arr = 1:0.01:1; % soma threshold 
 
 
 idx = 1;
@@ -111,7 +111,7 @@ for i = 1:length(params)
     out_mat(i).soma_thresh = par.soma_thresh;
 end
 
-save('./output/output.mat', 'out_mat');
+save('./output/output3.mat', 'out_mat');
 
 
 
