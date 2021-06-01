@@ -127,13 +127,24 @@ class SpikingNetwork:
         adjusted_weight_scale = weight_scale * (1.0 - self._mem_discount)
 
         assert len(self.nb_units_by_layer) == len(self.weights_by_layer) + 1
+
+        self.weights_by_layer[0] = torch.empty(
+            # Shape: [input_units, hidden_units, compartments]
+            (*self.nb_units_by_layer[0:2], 2),
+            device=Environment.device,
+            dtype=Environment.dtype,
+            requires_grad=True,
+        )
+        self.weights_by_layer[1] = torch.empty(
+            # Shape: [hidden_units, output_units]
+            self.nb_units_by_layer[1:3],
+            device=Environment.device,
+            dtype=Environment.dtype,
+            requires_grad=True,
+        )
+
+        # Initialize all weights from a normal distribution.
         for l in range(len(self.weights_by_layer)):
-            self.weights_by_layer[l] = torch.empty(
-                self.nb_units_by_layer[l : l + 2],
-                device=Environment.device,
-                dtype=Environment.dtype,
-                requires_grad=True,
-            )
             torch.nn.init.normal_(
                 self.weights_by_layer[l],
                 mean=0.0,
@@ -142,7 +153,8 @@ class SpikingNetwork:
 
     def run_snn(self, inputs) -> Tuple['torch.something', dict]:
         pre_activation_l1 = torch.einsum(
-            "abc,cd->abd", (inputs, self.weights_by_layer[0])
+            # [b]atches, [t]ime, [i]nput units, [h]idden units, [c]ompartments
+            "bti,ihc->bthc", (inputs, self.weights_by_layer[0])
         )
         dendrite = torch.zeros(
             (Environment.batch_size, self.nb_units_by_layer[1]),
@@ -170,11 +182,15 @@ class SpikingNetwork:
 
             new_dendrite = (
                 self._syn_discount * dendrite
-                + pre_activation_l1[:, t]
+                + pre_activation_l1[:, t, :, 0]  # Direct input to dendrite
                 + self._backprop_gain * reset
             )
             dendrite_nl = self._dendritic_spike_fn(dendrite)
-            new_soma = (self._mem_discount * soma + dendrite_nl) * (
+            new_soma = (
+                self._mem_discount * soma
+                + pre_activation_l1[:, t, :, 1]  # Direct input to cell body
+                + dendrite_nl
+            ) * (
                 1.0 - reset
             )
 
@@ -193,7 +209,8 @@ class SpikingNetwork:
 
         # Readout layer
         pre_activation_l2 = torch.einsum(
-            "abc,cd->abd", (spk_rec, self.weights_by_layer[1])
+            # [b]atch, [t]ime, [h]idden, [o]utput
+            "bth,ho->bto", (spk_rec, self.weights_by_layer[1])
         )
         flt = torch.zeros(
             (Environment.batch_size, self.nb_units_by_layer[2]),
