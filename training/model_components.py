@@ -1,4 +1,5 @@
-from typing import Callable, Tuple
+from typing import Callable, Tuple, Sequence
+from dataclasses import dataclass
 
 import torch
 import numpy as np
@@ -89,83 +90,266 @@ class Environment:
     batch_size = 256
 
 
+@dataclass
+class NeuronParameters:
+    tau_mem: float = 10e-3
+    tau_syn: float = 5e-3
+
+    somatic_spike_fn: Callable
+
+
+@dataclass
+class TwoCompartmentNeuronParameters(NeuronParameters):
+    """A spiking neuron with a dendritic compartment.
+
+    No recurrent connection from somatic compartment back to dendritic
+    compartment.
+
+    """
+
+    dendritic_spike_fn: Callable
+
+
+@dataclass
+class ParallelNeuronParameters(TwoCompartmentNeuronParameters):
+    """Parameters of a two compartment neuron with parallel dendritic subunits.
+
+    No recurrent connection from somatic compartment back to dendritic
+    compartment.
+
+    """
+
+    NotImplemented
+
+
+@dataclass
+class RecurrentNeuronParameters(TwoCompartmentNeuronParameters):
+    """Params of a two compartment neuron with recurrent connection.
+
+    Has a feedback connection from soma to dendrite.
+
+    """
+
+    backprop_gain: float = 0.05
+
+
+@dataclass
+class PRCNeuronParameters(ParallelNeuronParameters, RecurrentNeuronParameters):
+    # Union of ParallelNeuronParameters and RecurrentNeuronParameters and
+    # nothing more.
+    pass
+
+
+@dataclass
+class NetworkArchitecture:
+    nb_units_by_layer: Sequence[int] = (100, 4, 2)
+
+
+class _Synapses:
+    def __init__(self, nb_units: int, discount_factor: float):
+        self._discount_factor = discount_factor
+        self.array = _zeros((Environment.batch_size, nb_units))
+
+    def integrate_weighted_spikes(self, inputs):
+        self.array = self.array * self._discount_factor + inputs
+
+
+def _zeros(shape):
+    """Get zeros tensor with device and dtype determined by Environment."""
+    return torch.zeros(
+        shape, device=Environment.device, dtype=Environment.dtype
+    )
+
+
 class SpikingNetwork:
     def __init__(
         self,
-        tau_mem: float,
-        tau_syn: float,
-        backprop_gain: float,
-        somatic_spike_fn: Callable,
-        dendritic_spike_fn: Callable,
+        neuron_parameters: NeuronParameters,
+        network_architecture: NetworkArchitecture,
     ):
-        self._syn_discount = None
-        self._mem_discount = None
-        self._backprop_gain = backprop_gain
-        self._somatic_spike_fn = somatic_spike_fn
-        self._dendritic_spike_fn = dendritic_spike_fn
-
-        self._set_neuron_timescales(
-            tau_mem, tau_syn,
+        # This is called 'alpha' in Friedemann's script
+        self._syn_discount = self._timescale_to_discount(
+            neuron_parameters.tau_syn
         )
+        # This is called 'beta' in Friedemann's script
+        self._mem_discount = self._timescale_to_discount(
+            neuron_parameters.tau_mem
+        )
+        self._somatic_spike_fn = neuron_parameters.somatic_spike_fn
 
-        self.nb_units_by_layer = (100, 4, 2)  # Input, hidden, output
-        # Input -> hidden, hidden -> output
+        # architecture stuff...
+        self.nb_units_by_layer = network_architecture.nb_units_by_layer
         self.weights_by_layer = [
             None for _ in range(len(self.nb_units_by_layer) - 1)
         ]
         self._initialize_weights()
 
-    def _set_neuron_timescales(
-        self, tau_mem: float, tau_syn: float,
-    ):
-        # Convert the synaptic and membrane time constants to discounting
-        # factors. These are called 'alpha' and 'beta' in Friedemann's script.
-        self._syn_discount = float(np.exp(-Environment.time_step / tau_syn))
-        self._mem_discount = float(np.exp(-Environment.time_step / tau_mem))
+    @staticmethod
+    def _timescale_to_discount(timescale: float) -> float:
+        return float(np.exp(-Environment.time_step / timescale))
 
     def _initialize_weights(self, weight_scale=7.0):
         adjusted_weight_scale = weight_scale * (1.0 - self._mem_discount)
 
         assert len(self.nb_units_by_layer) == len(self.weights_by_layer) + 1
 
-        self.weights_by_layer[0] = torch.empty(
-            # Shape: [input_units, hidden_units, compartments]
-            (*self.nb_units_by_layer[0:2], 2),
-            device=Environment.device,
-            dtype=Environment.dtype,
-            requires_grad=True,
-        )
-        self.weights_by_layer[1] = torch.empty(
-            # Shape: [hidden_units, output_units]
-            self.nb_units_by_layer[1:3],
-            device=Environment.device,
-            dtype=Environment.dtype,
-            requires_grad=True,
-        )
-
         # Initialize all weights from a normal distribution.
         for l in range(len(self.weights_by_layer)):
+            self.weights_by_layer[l] = torch.empty(
+                self.nb_units_by_layer[l : l + 2],
+                device=Environment.device,
+                dtype=Environment.dtype,
+                requires_grad=True,
+            )
             torch.nn.init.normal_(
                 self.weights_by_layer[l],
                 mean=0.0,
                 std=adjusted_weight_scale / np.sqrt(self.nb_units_by_layer[l]),
             )
 
-    def run_snn(self, inputs) -> Tuple['torch.something', dict]:
+    def _compute_new_soma_state(
+        self,
+        current_state,
+        external_inputs: _Synapses,
+        somatic_spikes,
+    ):
+        return (
+            self._mem_discount * current_state
+            + external_inputs.array
+        ) * (1.0 - somatic_spikes)
+
+    def run_snn(self, inputs):
         pre_activation_l1 = torch.einsum(
             # [b]atches, [t]ime, [i]nput units, [h]idden units, [c]ompartments
-            "bti,ihc->bthc", (inputs, self.weights_by_layer[0])
+            "bti,ih->bth",
+            (inputs, self.weights_by_layer[0]),
         )
-        dendrite = torch.zeros(
-            (Environment.batch_size, self.nb_units_by_layer[1]),
-            device=Environment.device,
-            dtype=Environment.dtype,
+        soma_syn = _Synapses(self.nb_units_by_layer[1], self._syn_discount)
+        soma = _zeros((Environment.batch_size, self.nb_units_by_layer[1]))
+
+        # Here we define lists which we use to record the membrane potentials and output spikes
+        soma_rec = []
+        spk_rec = []
+
+        # Here we loop over time
+        for t in range(Environment.nb_steps):
+            soma_syn.integrate_weighted_spikes(pre_activation_l1[:, t, :, 1])
+
+            out = self._somatic_spike_fn(soma)
+
+            reset = (
+                out.detach()
+            )  # We do not want to backprop through the reset
+            new_soma = self._compute_new_soma_state(
+                soma, soma_syn, reset
+            )
+
+            soma_rec.append(soma)
+            spk_rec.append(out)
+
+            soma = new_soma
+
+        soma_rec = torch.stack(soma_rec, dim=1)
+        spk_rec = torch.stack(spk_rec, dim=1)
+
+        del soma, new_soma, reset, soma_syn
+
+        # Readout layer
+        pre_activation_l2 = torch.einsum(
+            # [b]atch, [t]ime, [h]idden, [o]utput
+            "bth,ho->bto",
+            (spk_rec, self.weights_by_layer[1]),
         )
-        soma = torch.zeros(
-            (Environment.batch_size, self.nb_units_by_layer[1]),
-            device=Environment.device,
-            dtype=Environment.dtype,
+        output_syn = _Synapses(self.nb_units_by_layer[2], self._syn_discount)
+        out = _zeros((Environment.batch_size, self.nb_units_by_layer[2]))
+        out_rec = [out]
+        for t in range(Environment.nb_steps):
+            out = self._mem_discount * out + output_syn.array
+            output_syn.integrate_weighted_spikes(pre_activation_l2[:, t, :])
+            out_rec.append(out)
+
+        out_rec = torch.stack(out_rec, dim=1)
+        other_recs = {
+            'hidden_soma': soma_rec,
+            'hidden_soma_spike': spk_rec,
+        }
+        return out_rec, other_recs
+
+
+class TwoCompartmentSpikingNetwork(SpikingNetwork):
+    def __init__(
+        self,
+        neuron_parameters: TwoCompartmentNeuronParameters,
+        network_architecture: NetworkArchitecture,
+    ):
+        super().__init__(neuron_parameters, network_architecture)
+        self._dendritic_spike_fn = neuron_parameters.dendritic_spike_fn
+
+    def _initialize_weights(self, weight_scale=7.0):
+        adjusted_weight_scale = weight_scale * (1.0 - self._mem_discount)
+
+        assert len(self.nb_units_by_layer) == len(self.weights_by_layer) + 1
+
+        # Initialize all weights from a normal distribution.
+        for l in range(len(self.weights_by_layer)):
+            if l < len(self.weights_by_layer) - 1:
+                # All layers before output layer have two compartment neurons,
+                # so we add an extra dim to the weight array for inputs to
+                # somata and dendrites.
+                # Shape is [units_in_prev_layer, units_this_layer, compartment]
+                weight_tensor_shape: Tuple[int, int, int] = (
+                    *self.nb_units_by_layer[l : l + 2],
+                    2,
+                )
+            else:
+                # The output layer has one compartment neurons, so no need for
+                # an extra dimension.
+                # Shape is [units_in_prev_layer, units_this_layer]
+                weight_tensor_shape: Tuple[int, int] = self.nb_units_by_layer[
+                    l : l + 2
+                ]
+            self.weights_by_layer[l] = torch.empty(
+                weight_tensor_shape,
+                device=Environment.device,
+                dtype=Environment.dtype,
+                requires_grad=True,
+            )
+            torch.nn.init.normal_(
+                self.weights_by_layer[l],
+                mean=0.0,
+                std=adjusted_weight_scale / np.sqrt(self.nb_units_by_layer[l]),
+            )
+
+    def _compute_new_dendrite_state(
+        self, current_state, external_inputs: _Synapses, somatic_spikes
+    ):
+        # Note: somatic_spikes is not used. Included for consistency with
+        # RecurrentSpikingNetwork
+        return self._mem_discount * current_state + external_inputs.array
+
+    def _compute_new_soma_state(
+        self,
+        current_state,
+        external_inputs: _Synapses,
+        dendritic_nl_input,
+        somatic_spikes,
+    ):
+        return (
+            self._mem_discount * current_state
+            + external_inputs.array
+            + dendritic_nl_input
+        ) * (1.0 - somatic_spikes)
+
+    def run_snn(self, inputs):
+        pre_activation_l1 = torch.einsum(
+            # [b]atches, [t]ime, [i]nput units, [h]idden units, [c]ompartments
+            "bti,ihc->bthc",
+            (inputs, self.weights_by_layer[0]),
         )
+        dendrite_syn = _Synapses(self.nb_units_by_layer[1], self._syn_discount)
+        soma_syn = _Synapses(self.nb_units_by_layer[1], self._syn_discount)
+        dendrite = _zeros((Environment.batch_size, self.nb_units_by_layer[1]))
+        soma = _zeros((Environment.batch_size, self.nb_units_by_layer[1]))
 
         # Here we define lists which we use to record the membrane potentials and output spikes
         dendrite_rec = []
@@ -175,23 +359,22 @@ class SpikingNetwork:
 
         # Here we loop over time
         for t in range(Environment.nb_steps):
+            dendrite_syn.integrate_weighted_spikes(
+                pre_activation_l1[:, t, :, 0]
+            )
+            soma_syn.integrate_weighted_spikes(pre_activation_l1[:, t, :, 1])
+
             out = self._somatic_spike_fn(soma)
+            dendrite_nl = self._dendritic_spike_fn(dendrite)
+
             reset = (
                 out.detach()
             )  # We do not want to backprop through the reset
-
-            new_dendrite = (
-                self._syn_discount * dendrite
-                + pre_activation_l1[:, t, :, 0]  # Direct input to dendrite
-                + self._backprop_gain * reset
+            new_dendrite = self._compute_new_dendrite_state(
+                dendrite, dendrite_syn, reset
             )
-            dendrite_nl = self._dendritic_spike_fn(dendrite)
-            new_soma = (
-                self._mem_discount * soma
-                + pre_activation_l1[:, t, :, 1]  # Direct input to cell body
-                + dendrite_nl
-            ) * (
-                1.0 - reset
+            new_soma = self._compute_new_soma_state(
+                soma, soma_syn, dendrite_nl, reset
             )
 
             soma_rec.append(soma)
@@ -207,29 +390,29 @@ class SpikingNetwork:
         soma_rec = torch.stack(soma_rec, dim=1)
         spk_rec = torch.stack(spk_rec, dim=1)
 
+        del (
+            dendrite,
+            soma,
+            new_dendrite,
+            new_soma,
+            reset,
+            dendrite_nl,
+            dendrite_syn,
+            soma_syn,
+        )
+
         # Readout layer
         pre_activation_l2 = torch.einsum(
             # [b]atch, [t]ime, [h]idden, [o]utput
-            "bth,ho->bto", (spk_rec, self.weights_by_layer[1])
+            "bth,ho->bto",
+            (spk_rec, self.weights_by_layer[1]),
         )
-        flt = torch.zeros(
-            (Environment.batch_size, self.nb_units_by_layer[2]),
-            device=Environment.device,
-            dtype=Environment.dtype,
-        )
-        out = torch.zeros(
-            (Environment.batch_size, self.nb_units_by_layer[2]),
-            device=Environment.device,
-            dtype=Environment.dtype,
-        )
+        output_syn = _Synapses(self.nb_units_by_layer[2], self._syn_discount)
+        out = _zeros((Environment.batch_size, self.nb_units_by_layer[2]))
         out_rec = [out]
         for t in range(Environment.nb_steps):
-            new_flt = self._syn_discount * flt + pre_activation_l2[:, t]
-            new_out = self._mem_discount * out + flt
-
-            flt = new_flt
-            out = new_out
-
+            out = self._mem_discount * out + output_syn.array
+            output_syn.integrate_weighted_spikes(pre_activation_l2[:, t, :])
             out_rec.append(out)
 
         out_rec = torch.stack(out_rec, dim=1)
@@ -240,3 +423,28 @@ class SpikingNetwork:
             'hidden_dendrite_spike': dendrite_nl_rec,
         }
         return out_rec, other_recs
+
+
+class RecurrentSpikingNetwork(TwoCompartmentSpikingNetwork):
+    def __init__(
+        self,
+        neuron_parameters: RecurrentNeuronParameters,
+        network_architecture: NetworkArchitecture,
+    ):
+        super().__init__(neuron_parameters, network_architecture)
+        self._backprop_gain = neuron_parameters.backprop_gain
+
+    def _compute_new_dendrite_state(
+        self, current_state, external_inputs, somatic_spikes
+    ):
+        return (
+            self._syn_discount * current_state
+            + external_inputs
+            + self._backprop_gain * somatic_spikes
+        )
+
+class ParallelSpikingNetwork(TwoCompartmentSpikingNetwork):
+    NotImplemented
+
+class PRCSpikingNetwork(ParallelSpikingNetwork, RecurrentSpikingNetwork):
+    NotImplemented
