@@ -1,5 +1,15 @@
-from typing import Callable, Tuple, Sequence
+from typing import (
+    Callable,
+    Tuple,
+    Sequence,
+    TypeVar,
+    Optional,
+    List,
+    Iterable,
+    Generic,
+)
 from dataclasses import dataclass
+import warnings
 
 import torch
 import numpy as np
@@ -92,8 +102,9 @@ class Environment:
 
 @dataclass
 class NeuronParameters:
-    tau_mem: float = 10e-3
-    tau_syn: float = 5e-3
+    tau_mem: float
+    tau_syn: float
+    feedback_strength: float
 
     somatic_spike_fn: Callable
 
@@ -143,15 +154,20 @@ class PRCNeuronParameters(ParallelNeuronParameters, RecurrentNeuronParameters):
 @dataclass
 class NetworkArchitecture:
     nb_units_by_layer: Sequence[int] = (100, 4, 2)
+    weight_scale: float = 7.0
 
 
-class _Synapses:
-    def __init__(self, nb_units: int, discount_factor: float):
-        self._discount_factor = discount_factor
-        self.array = _zeros((Environment.batch_size, nb_units))
+class _TimeDependent:
+    def __init__(self, initial_state):
+        self.current_state = initial_state
+        self.next_state = None
 
-    def integrate_weighted_spikes(self, inputs):
-        self.array = self.array * self._discount_factor + inputs
+    def update(self):
+        """Set the current_state to the next_state and clear next_state."""
+        if self.next_state is None:
+            raise RuntimeError('next_state is not set')
+        self.current_state = self.next_state
+        self.next_state = None
 
 
 def _zeros(shape):
@@ -161,35 +177,375 @@ def _zeros(shape):
     )
 
 
+def _time_constant_to_discount_factor(time_constant: float) -> float:
+    return float(np.exp(-Environment.time_step / time_constant))
+
+
+class Subunit:
+    def __init__(
+        self,
+        time_constant: float,
+        initial_linear_state: torch.Tensor,
+        initial_nonlinear_state: Optional[torch.Tensor] = None,
+        feedforward_fn: Callable[[torch.Tensor], torch.Tensor] = lambda x: x,
+        feedback_fn: Callable[
+            [torch.Tensor, torch.Tensor], torch.Tensor
+        ] = lambda expected_linear, nonlinear: expected_linear,
+    ):
+        """Initialize the Subunit.
+
+        Parameters
+        ----------
+        time_constant
+            Time constant of the Subunit passive filter.
+        feedforward_fn
+            Nonlinear function applied to subunit input after linear filtering
+            to generate subunit output. Default is no nonlinearity.
+        feedback_fn
+            Nonlinear function used to control the effect of the nonlinear
+            output of the subunit on the linear state at the next time step.
+            Must accept the expected linear state at the next time step and
+            the nonlinear state at the current time step as inputs.
+
+        """
+        self._linear: _TimeDependent = _TimeDependent(initial_linear_state)
+        if initial_nonlinear_state is None:
+            initial_nonlinear_state = initial_linear_state.clone()
+        self._nonlinear: _TimeDependent = _TimeDependent(
+            initial_nonlinear_state
+        )
+        self._discount_factor: float = _time_constant_to_discount_factor(
+            time_constant
+        )
+        self._feedforward_fn = feedforward_fn
+        self._feedback_fn = feedback_fn
+
+    @property
+    def linear(self):
+        return self._linear.current_state
+
+    @property
+    def nonlinear(self):
+        return self._nonlinear.current_state
+
+    def integrate_input(self, input_: torch.Tensor):
+        self._linear.next_state = self._feedback_fn(
+            self._linear.current_state * self._discount_factor + input_,
+            self._nonlinear.current_state,
+        )
+        self._nonlinear.next_state = self._feedforward_fn(
+            self._linear.current_state
+        )
+
+    def update(self):
+        self._linear.update()
+        self._nonlinear.update()
+
+
+T = TypeVar('T')
+
+
+class Recorder(Generic[T]):
+    """Record a set of attributes over time."""
+
+    def __init__(
+        self,
+        object_to_record: T,
+        attributes_to_record: Iterable[str],
+        record_initial_state: bool = True,
+    ):
+        """Initialize Recorder.
+
+        Parameters
+        ----------
+        object_to_record
+            The object whose attributes will be recorded when `record()` is
+            called.
+        attributes_to_record
+            Iterable of strings giving the names of attributes to record.
+            Nested attributes can be specified using dot notation. For example,
+            use `['foo.bar', 'a.b.c']` to record `object_to_record.foo.bar` and
+            `object_to_record.a.b.c`.
+        record_initial_state
+            Whether to record the state of `object_to_record` upon
+            initialization of `Recorder`. Equivalent to calling `record()`
+            immediately after initialization.
+
+        """
+        self._recorded_object = object_to_record
+        self.recorded = {attr_name: [] for attr_name in attributes_to_record}
+        self._finalized = False
+
+        if record_initial_state:
+            self.record()
+
+    def record(self):
+        """Save the current state of recorded attributes."""
+        self._check_not_finalized()
+        for attr in self.recorded.keys():
+            self.recorded[attr].append(self._get_recorded_attr(attr))
+
+    def update_and_record(self):
+        """Update recorded attributes and record the new state."""
+        self._check_not_finalized()
+        self._recorded_object.update()
+        self.record()
+
+    def finalize(self):
+        """Finalize Recording so it cannot be recorded to anymore.
+
+        Converts values in recorded dict from lists to tensors.
+
+        """
+        for attr in self.recorded.keys():
+            self.recorded[attr] = torch.stack(self.recorded[attr], dim=1)
+        self._finalized = True
+
+    def _get_recorded_attr(self, name: str):
+        attribute_chain = name.split('.')
+        return Recorder._Recorder__get_nested_attr(
+            self._recorded_object, attribute_chain
+        )
+
+    @staticmethod
+    def __get_nested_attr(obj, attribute_chain: List[str]):
+        """Resolve nested attributes by name.
+
+        Examples
+        -------
+        __get_nested_attr(obj, ['a', 'b', 'c']) is equivalent to obj.a.b.c
+
+        """
+        name = attribute_chain.pop(0)
+        if len(attribute_chain) > 0:
+            return Recorder._Recorder__get_nested_attr(
+                getattr(obj, name), attribute_chain
+            )
+        return getattr(obj, name)
+
+    def _check_not_finalized(self):
+        if self._finalized:
+            raise RuntimeError(
+                'Recorder has been finalized and should be considered '
+                'immutable.'
+            )
+
+
+class Synapse(Subunit):
+    def __init__(self, nb_units: int, time_constant: float):
+        initial_state = _zeros((Environment.batch_size, nb_units))
+        super().__init__(
+            time_constant,
+            initial_state,
+            initial_state,
+            lambda linear: linear,
+            lambda linear, nonlinear: linear,
+        )
+
+    @property
+    def nonlinear(self):
+        warnings.warn(
+            'Synapse has no nonlinearity; use linear attribute instead to '
+            'avoid one timestep delay'
+        )
+        return super().nonlinear
+
+
+class Neuron:
+    _attributes_to_record = (
+        'somatic_synapse.linear',
+        'somatic_subunit.linear',
+        'output',
+    )
+
+    def __init__(self, parameters: NeuronParameters, nb_units: int):
+        self.somatic_synapse = Synapse(nb_units, parameters.tau_syn)
+        self.somatic_subunit = Subunit(
+            parameters.tau_mem,
+            _zeros((Environment.batch_size, nb_units)),
+            _zeros((Environment.batch_size, nb_units)),
+            parameters.somatic_spike_fn,
+            lambda linear, nonlinear: linear
+            - parameters.feedback_strength * nonlinear.detach(),
+        )
+
+    def integrate_input(self, incoming_spikes: torch.Tensor):
+        self.somatic_synapse.integrate_input(incoming_spikes)
+        self.somatic_subunit.integrate_input(self.somatic_synapse.linear)
+
+    @property
+    def output(self):
+        return self.somatic_subunit.nonlinear
+
+    def update(self):
+        self.somatic_synapse.update()
+        self.somatic_subunit.update()
+
+    def get_recorder(self) -> Recorder:
+        return Recorder(self, self._attributes_to_record)
+
+
+class NonSpikingNeuron(Neuron):
+    """Identical to a Neuron, but does not spike."""
+
+    _attributes_to_record = ('somatic_synapse.linear', 'output')
+
+    def __init__(self, parameters: NeuronParameters, nb_units: int):
+        """Initialize the NonSpikingNeuron.
+
+        Note: parameters.somatic_spike_fn is ignored.
+
+        """
+        self.somatic_synapse = Synapse(nb_units, parameters.tau_syn)
+        self.somatic_subunit = Subunit(
+            parameters.tau_mem,
+            _zeros((Environment.batch_size, nb_units)),
+            _zeros((Environment.batch_size, nb_units)),
+            # Manually override spike and reset functions
+            lambda linear: linear,
+            lambda linear, nonlinear: None,
+        )
+
+    @property
+    def output(self):
+        return self.somatic_subunit.linear
+
+
+class TwoCompartmentNeuron(Neuron):
+    _attributes_to_record = (
+        'dendritic_synapse.linear',
+        'dendritic_subunit.linear',
+        'dendritic_subunit.nonlinear',
+        'somatic_synapse.linear',
+        'somatic_subunit.linear',
+        'output',
+    )
+
+    def __init__(
+        self, parameters: TwoCompartmentNeuronParameters, nb_units: int
+    ):
+        super().__init__(parameters, nb_units)
+        self.dendritic_synapse = Synapse(nb_units, parameters.tau_syn)
+        self.dendritic_subunit = Subunit(
+            parameters.tau_mem,
+            _zeros((Environment.batch_size, nb_units)),
+            _zeros((Environment.batch_size, nb_units)),
+            parameters.dendritic_spike_fn,
+            lambda linear, nonlinear: linear,  # No feedback
+        )
+
+    def integrate_input(self, weighted_incoming_spikes: torch.Tensor):
+        """Integrate weighted input from previous layer.
+
+        Parameters
+        ----------
+        weighted_incoming_spikes
+            Last axis of tensor should have a size of 2. First index is passed
+            to dendrites, second index is passed to soma.
+
+        """
+        if weighted_incoming_spikes.shape[-1] != 2:
+            raise ValueError(
+                'Expected last axis of weighted_incoming_spikes to have size 2'
+            )
+
+        self.dendritic_synapse.integrate_input(
+            weighted_incoming_spikes[..., 0]
+        )
+        self.dendritic_subunit.integrate_input(self.dendritic_synapse.linear)
+        self.somatic_synapse.integrate_input(weighted_incoming_spikes[..., 1])
+        self.somatic_subunit.integrate_input(
+            self.somatic_synapse.linear + self.dendritic_subunit.nonlinear
+        )
+
+    def update(self):
+        super().update()
+        self.dendritic_synapse.update()
+        self.dendritic_subunit.update()
+
+
+class RecurrentNeuron(TwoCompartmentNeuron):
+    def __init__(self, parameters: RecurrentNeuronParameters, nb_units: int):
+        super().__init__(parameters, nb_units)
+        self._backprop_gain = parameters.backprop_gain
+
+    def integrate_input(self, weighted_incoming_spikes: torch.Tensor):
+        """Integrate weighted input from previous layer.
+
+        Parameters
+        ----------
+        weighted_incoming_spikes
+            Last axis of tensor should have a size of 2. First index is passed
+            to dendrites, second index is passed to soma.
+
+        """
+        if weighted_incoming_spikes.shape[-1] != 2:
+            raise ValueError(
+                'Expected last axis of weighted_incoming_spikes to have size 2'
+            )
+
+        self.dendritic_synapse.integrate_input(
+            weighted_incoming_spikes[..., 0]
+        )
+        self.dendritic_subunit.integrate_input(
+            self.dendritic_synapse.linear
+            + self._backprop_gain * self.somatic_subunit.nonlinear
+        )
+        self.somatic_synapse.integrate_input(weighted_incoming_spikes[..., 1])
+        self.somatic_subunit.integrate_input(
+            self.somatic_synapse.linear + self.dendritic_subunit.nonlinear
+        )
+
+
+class ParallelNeuron:
+    NotImplemented
+
+
+class PRCNeuron:
+    NotImplemented
+
+
 class SpikingNetwork:
+    _hidden_neuron_cls = Neuron
+    _output_neuron_cls = NonSpikingNeuron
+
     def __init__(
         self,
         neuron_parameters: NeuronParameters,
         network_architecture: NetworkArchitecture,
     ):
-        # This is called 'alpha' in Friedemann's script
-        self._syn_discount = self._timescale_to_discount(
-            neuron_parameters.tau_syn
-        )
-        # This is called 'beta' in Friedemann's script
-        self._mem_discount = self._timescale_to_discount(
-            neuron_parameters.tau_mem
-        )
-        self._somatic_spike_fn = neuron_parameters.somatic_spike_fn
-
-        # architecture stuff...
         self.nb_units_by_layer = network_architecture.nb_units_by_layer
+
         self.weights_by_layer = [
             None for _ in range(len(self.nb_units_by_layer) - 1)
         ]
-        self._initialize_weights()
+        self._initialize_weights(
+            network_architecture.weight_scale, neuron_parameters.tau_mem
+        )
 
-    @staticmethod
-    def _timescale_to_discount(timescale: float) -> float:
-        return float(np.exp(-Environment.time_step / timescale))
+        self.units_by_layer = []
+        self._initialize_units(neuron_parameters)
 
-    def _initialize_weights(self, weight_scale=7.0):
-        adjusted_weight_scale = weight_scale * (1.0 - self._mem_discount)
+    def _initialize_units(self, neuron_parameters: NeuronParameters):
+        for l in range(1, len(self.nb_units_by_layer)):
+            if l < len(self.nb_units_by_layer) - 1:
+                # If this is not the last layer, use spiking subunits.
+                self.units_by_layer.append(
+                    self._hidden_neuron_cls(
+                        neuron_parameters, self.nb_units_by_layer[l]
+                    )
+                )
+            else:
+                # If this is the last layer, remove spiking nonlinearity.
+                self.units_by_layer.append(
+                    self._output_neuron_cls(
+                        neuron_parameters, self.nb_units_by_layer[l]
+                    )
+                )
+
+    def _initialize_weights(self, weight_scale, membrane_time_constant):
+        discount = _time_constant_to_discount_factor(membrane_time_constant)
+        adjusted_weight_scale = weight_scale * (1.0 - discount)
 
         assert len(self.nb_units_by_layer) == len(self.weights_by_layer) + 1
 
@@ -207,86 +563,51 @@ class SpikingNetwork:
                 std=adjusted_weight_scale / np.sqrt(self.nb_units_by_layer[l]),
             )
 
-    def _compute_new_soma_state(
-        self,
-        current_state,
-        external_inputs: _Synapses,
-        somatic_spikes,
-    ):
-        return (
-            self._mem_discount * current_state
-            + external_inputs.array
-        ) * (1.0 - somatic_spikes)
-
     def run_snn(self, inputs):
-        pre_activation_l1 = torch.einsum(
-            # [b]atches, [t]ime, [i]nput units, [h]idden units, [c]ompartments
+        weighted_spikes_l1 = torch.einsum(
+            # [b]atches, [t]ime, [i]nput units, [h]idden units
             "bti,ih->bth",
             (inputs, self.weights_by_layer[0]),
         )
-        soma_syn = _Synapses(self.nb_units_by_layer[1], self._syn_discount)
-        soma = _zeros((Environment.batch_size, self.nb_units_by_layer[1]))
-
-        # Here we define lists which we use to record the membrane potentials and output spikes
-        soma_rec = []
-        spk_rec = []
-
-        # Here we loop over time
-        for t in range(Environment.nb_steps):
-            soma_syn.integrate_weighted_spikes(pre_activation_l1[:, t, :, 1])
-
-            out = self._somatic_spike_fn(soma)
-
-            reset = (
-                out.detach()
-            )  # We do not want to backprop through the reset
-            new_soma = self._compute_new_soma_state(
-                soma, soma_syn, reset
-            )
-
-            soma_rec.append(soma)
-            spk_rec.append(out)
-
-            soma = new_soma
-
-        soma_rec = torch.stack(soma_rec, dim=1)
-        spk_rec = torch.stack(spk_rec, dim=1)
-
-        del soma, new_soma, reset, soma_syn
+        recorder_l1 = self._run_layer(
+            weighted_spikes_l1, self.units_by_layer[0]
+        )
 
         # Readout layer
-        pre_activation_l2 = torch.einsum(
+        weighted_spikes_l2 = torch.einsum(
             # [b]atch, [t]ime, [h]idden, [o]utput
             "bth,ho->bto",
-            (spk_rec, self.weights_by_layer[1]),
+            (recorder_l1.recorded['output'], self.weights_by_layer[1]),
         )
-        output_syn = _Synapses(self.nb_units_by_layer[2], self._syn_discount)
-        out = _zeros((Environment.batch_size, self.nb_units_by_layer[2]))
-        out_rec = [out]
-        for t in range(Environment.nb_steps):
-            out = self._mem_discount * out + output_syn.array
-            output_syn.integrate_weighted_spikes(pre_activation_l2[:, t, :])
-            out_rec.append(out)
+        recorder_l2 = self._run_layer(
+            weighted_spikes_l2, self.units_by_layer[1]
+        )
 
-        out_rec = torch.stack(out_rec, dim=1)
+        out_rec = recorder_l2.recorded['output']
         other_recs = {
-            'hidden_soma': soma_rec,
-            'hidden_soma_spike': spk_rec,
+            'l1': recorder_l1,
+            'l2': recorder_l2,
         }
+
         return out_rec, other_recs
+
+    @staticmethod
+    def _run_layer(input_: torch.Tensor, units: Neuron) -> Recorder[Neuron]:
+        recorder: Recorder[Neuron] = units.get_recorder()
+        for t in range(Environment.nb_steps):
+            units.integrate_input(input_[:, t, ...])
+            recorder.update_and_record()
+
+        recorder.finalize()
+
+        return recorder
 
 
 class TwoCompartmentSpikingNetwork(SpikingNetwork):
-    def __init__(
-        self,
-        neuron_parameters: TwoCompartmentNeuronParameters,
-        network_architecture: NetworkArchitecture,
-    ):
-        super().__init__(neuron_parameters, network_architecture)
-        self._dendritic_spike_fn = neuron_parameters.dendritic_spike_fn
+    _hidden_neuron_cls = TwoCompartmentNeuron
 
-    def _initialize_weights(self, weight_scale=7.0):
-        adjusted_weight_scale = weight_scale * (1.0 - self._mem_discount)
+    def _initialize_weights(self, weight_scale, membrane_time_constant):
+        adjusted_weight_scale = weight_scale * (1.0 - membrane_time_constant)
 
         assert len(self.nb_units_by_layer) == len(self.weights_by_layer) + 1
 
@@ -320,131 +641,47 @@ class TwoCompartmentSpikingNetwork(SpikingNetwork):
                 std=adjusted_weight_scale / np.sqrt(self.nb_units_by_layer[l]),
             )
 
-    def _compute_new_dendrite_state(
-        self, current_state, external_inputs: _Synapses, somatic_spikes
-    ):
-        # Note: somatic_spikes is not used. Included for consistency with
-        # RecurrentSpikingNetwork
-        return self._mem_discount * current_state + external_inputs.array
-
-    def _compute_new_soma_state(
-        self,
-        current_state,
-        external_inputs: _Synapses,
-        dendritic_nl_input,
-        somatic_spikes,
-    ):
-        return (
-            self._mem_discount * current_state
-            + external_inputs.array
-            + dendritic_nl_input
-        ) * (1.0 - somatic_spikes)
-
     def run_snn(self, inputs):
-        pre_activation_l1 = torch.einsum(
+        weighted_spikes_l1 = torch.einsum(
             # [b]atches, [t]ime, [i]nput units, [h]idden units, [c]ompartments
             "bti,ihc->bthc",
             (inputs, self.weights_by_layer[0]),
         )
-        dendrite_syn = _Synapses(self.nb_units_by_layer[1], self._syn_discount)
-        soma_syn = _Synapses(self.nb_units_by_layer[1], self._syn_discount)
-        dendrite = _zeros((Environment.batch_size, self.nb_units_by_layer[1]))
-        soma = _zeros((Environment.batch_size, self.nb_units_by_layer[1]))
-
-        # Here we define lists which we use to record the membrane potentials and output spikes
-        dendrite_rec = []
-        dendrite_nl_rec = []
-        soma_rec = []
-        spk_rec = []
-
-        # Here we loop over time
-        for t in range(Environment.nb_steps):
-            dendrite_syn.integrate_weighted_spikes(
-                pre_activation_l1[:, t, :, 0]
-            )
-            soma_syn.integrate_weighted_spikes(pre_activation_l1[:, t, :, 1])
-
-            out = self._somatic_spike_fn(soma)
-            dendrite_nl = self._dendritic_spike_fn(dendrite)
-
-            reset = (
-                out.detach()
-            )  # We do not want to backprop through the reset
-            new_dendrite = self._compute_new_dendrite_state(
-                dendrite, dendrite_syn, reset
-            )
-            new_soma = self._compute_new_soma_state(
-                soma, soma_syn, dendrite_nl, reset
-            )
-
-            soma_rec.append(soma)
-            dendrite_rec.append(dendrite)
-            dendrite_nl_rec.append(dendrite_nl)
-            spk_rec.append(out)
-
-            dendrite = new_dendrite
-            soma = new_soma
-
-        dendrite_rec = torch.stack(dendrite_rec, dim=1)
-        dendrite_nl_rec = torch.stack(dendrite_nl_rec, dim=1)
-        soma_rec = torch.stack(soma_rec, dim=1)
-        spk_rec = torch.stack(spk_rec, dim=1)
-
-        del (
-            dendrite,
-            soma,
-            new_dendrite,
-            new_soma,
-            reset,
-            dendrite_nl,
-            dendrite_syn,
-            soma_syn,
+        recorder_l1 = self._run_layer(
+            weighted_spikes_l1, self.units_by_layer[0]
         )
 
         # Readout layer
-        pre_activation_l2 = torch.einsum(
+        weighted_spikes_l2 = torch.einsum(
             # [b]atch, [t]ime, [h]idden, [o]utput
             "bth,ho->bto",
-            (spk_rec, self.weights_by_layer[1]),
+            (recorder_l1.recorded['output'], self.weights_by_layer[1]),
         )
-        output_syn = _Synapses(self.nb_units_by_layer[2], self._syn_discount)
-        out = _zeros((Environment.batch_size, self.nb_units_by_layer[2]))
-        out_rec = [out]
-        for t in range(Environment.nb_steps):
-            out = self._mem_discount * out + output_syn.array
-            output_syn.integrate_weighted_spikes(pre_activation_l2[:, t, :])
-            out_rec.append(out)
+        recorder_l2 = self._run_layer(
+            weighted_spikes_l2, self.units_by_layer[1]
+        )
 
-        out_rec = torch.stack(out_rec, dim=1)
+        out_rec = recorder_l2.recorded['output']
         other_recs = {
-            'hidden_soma': soma_rec,
-            'hidden_soma_spike': spk_rec,
-            'hidden_dendrite': dendrite_rec,
-            'hidden_dendrite_spike': dendrite_nl_rec,
+            'l1': recorder_l1,
+            'l2': recorder_l2,
         }
+
         return out_rec, other_recs
 
 
 class RecurrentSpikingNetwork(TwoCompartmentSpikingNetwork):
-    def __init__(
-        self,
-        neuron_parameters: RecurrentNeuronParameters,
-        network_architecture: NetworkArchitecture,
-    ):
-        super().__init__(neuron_parameters, network_architecture)
-        self._backprop_gain = neuron_parameters.backprop_gain
+    # RecurrentSpikingNetwork inherits all its implementation from
+    # TwoCompartmentSpikingNetwork
+    _hidden_neuron_cls = RecurrentNeuron
 
-    def _compute_new_dendrite_state(
-        self, current_state, external_inputs, somatic_spikes
-    ):
-        return (
-            self._syn_discount * current_state
-            + external_inputs
-            + self._backprop_gain * somatic_spikes
-        )
 
 class ParallelSpikingNetwork(TwoCompartmentSpikingNetwork):
-    NotImplemented
+    # ParallelSpikingNetwork inherits all its implementation from
+    # TwoCompartmentSpikingNetwork
+    _hidden_neuron_cls = ParallelNeuron
+
 
 class PRCSpikingNetwork(ParallelSpikingNetwork, RecurrentSpikingNetwork):
-    NotImplemented
+    # PRCSpikingNetwork inherits all its implementation from its parents.
+    _hidden_neuron_cls = PRCNeuron
