@@ -833,6 +833,6 @@ class ParallelSpikingNetwork(TwoCompartmentSpikingNetwork):
     _hidden_neuron_cls = ParallelNeuron
 
 
-class PRCSpikingNetwork(ParallelSpikingNetwork, RecurrentSpikingNetwork):
+class PRCSpikingNetwork(TwoCompartmentSpikingNetwork):
     # PRCSpikingNetwork inherits all its implementation from its parents.
     _hidden_neuron_cls = PRCNeuron
