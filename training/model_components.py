@@ -122,15 +122,19 @@ class TwoCompartmentNeuronParameters(NeuronParameters):
 
 
 @dataclass
-class ParallelNeuronParameters(TwoCompartmentNeuronParameters):
+class ParallelNeuronParameters(NeuronParameters):
     """Parameters of a two compartment neuron with parallel dendritic subunits.
 
     No recurrent connection from somatic compartment back to dendritic
     compartment.
 
     """
-
-    NotImplemented
+    dend_na_fn: Callable
+    dend_ca_fn: Callable
+    dend_nmda_fn: Callable
+    tau_dend_na: float
+    tau_dend_ca: float
+    tau_dend_nmda: float
 
 
 @dataclass
@@ -145,10 +149,11 @@ class RecurrentNeuronParameters(TwoCompartmentNeuronParameters):
 
 
 @dataclass
-class PRCNeuronParameters(ParallelNeuronParameters, RecurrentNeuronParameters):
-    # Union of ParallelNeuronParameters and RecurrentNeuronParameters and
-    # nothing more.
-    pass
+class PRCNeuronParameters(ParallelNeuronParameters):
+    # This should really be a union of ParallelNeuronParameters and
+    # RecurrentNeuronParameters, but PRCNeuronParameters can't inherit from
+    # TwoCompartmentNeuronParameters through RecurrentNeuronParameters.
+    backprop_gain: float = 0.05
 
 
 @dataclass
@@ -515,12 +520,116 @@ class RecurrentNeuron(TwoCompartmentNeuron):
         )
 
 
-class ParallelNeuron:
-    NotImplemented
+class ParallelNeuron(Neuron):
+    _attributes_to_record = (
+        'dendritic_synapse.linear',
+        'dendritic_na_subunit.linear',
+        'dendritic_na_subunit.nonlinear',
+        'dendritic_ca_subunit.linear',
+        'dendritic_ca_subunit.nonlinear',
+        'dendritic_nmda_subunit.linear',
+        'dendritic_nmda_subunit.nonlinear',
+        'somatic_synapse.linear',
+        'somatic_subunit.linear',
+        'output',
+    )
+
+    def __init__(self, parameters: ParallelNeuronParameters, nb_units: int):
+        super().__init__(parameters, nb_units)
+        self.dendritic_synapse = Synapse(nb_units, parameters.tau_syn)
+        self.dendritic_na_subunit = Subunit(
+            parameters.tau_dend_na,
+            _zeros((Environment.batch_size, nb_units)),
+            _zeros((Environment.batch_size, nb_units)),
+            parameters.dend_na_fn,
+            lambda linear, nonlinear: linear,
+        )
+        self.dendritic_ca_subunit = Subunit(
+            parameters.tau_dend_ca,
+            _zeros((Environment.batch_size, nb_units)),
+            _zeros((Environment.batch_size, nb_units)),
+            parameters.dend_ca_fn,
+            lambda linear, nonlinear: linear,
+        )
+        self.dendritic_nmda_subunit = Subunit(
+            parameters.tau_dend_nmda,
+            _zeros((Environment.batch_size, nb_units)),
+            _zeros((Environment.batch_size, nb_units)),
+            parameters.dend_nmda_fn,
+            lambda linear, nonlinear: linear,
+        )
+
+    def integrate_input(self, weighted_incoming_spikes: torch.Tensor):
+        if weighted_incoming_spikes.shape[-1] != 2:
+            raise ValueError(
+                'Expected last axis of weighted_incoming_spikes to have size 2'
+            )
+
+        self.dendritic_synapse.integrate_input(
+            weighted_incoming_spikes[..., 0]
+        )
+        self.dendritic_na_subunit.integrate_input(
+            self.dendritic_synapse.linear
+        )
+        self.dendritic_ca_subunit.integrate_input(
+            self.dendritic_synapse.linear
+        )
+        self.dendritic_nmda_subunit.integrate_input(
+            self.dendritic_na_subunit.nonlinear
+            + self.dendritic_ca_subunit.nonlinear
+        )
+
+        self.somatic_synapse.integrate_input(weighted_incoming_spikes[..., 1])
+        self.somatic_subunit.integrate_input(
+            self.somatic_synapse.linear + self.dendritic_nmda_subunit.nonlinear
+        )
+
+    def update(self):
+        super().update()
+        self.dendritic_synapse.update()
+        self.dendritic_na_subunit.update()
+        self.dendritic_ca_subunit.update()
+        self.dendritic_nmda_subunit.update()
+
+    def reset(self):
+        super().reset()
+        self.dendritic_synapse.reset()
+        self.dendritic_na_subunit.reset()
+        self.dendritic_ca_subunit.reset()
+        self.dendritic_nmda_subunit.reset()
 
 
-class PRCNeuron:
-    NotImplemented
+class PRCNeuron(ParallelNeuron):
+    def __init__(self, parameters: PRCNeuronParameters, nb_units: int):
+        super().__init__(parameters, nb_units)
+        self._backprop_gain = parameters.backprop_gain
+
+    def integrate_input(self, weighted_incoming_spikes: torch.Tensor):
+        if weighted_incoming_spikes.shape[-1] != 2:
+            raise ValueError(
+                'Expected last axis of weighted_incoming_spikes to have size 2'
+            )
+
+        self.dendritic_synapse.integrate_input(
+            weighted_incoming_spikes[..., 0]
+        )
+        self.dendritic_na_subunit.integrate_input(
+            self.dendritic_synapse.linear
+        )
+        self.dendritic_ca_subunit.integrate_input(
+            self.dendritic_synapse.linear
+        )
+        # NMDA subunit gets backprops from soma
+        self.dendritic_nmda_subunit.integrate_input(
+            self.dendritic_na_subunit.nonlinear
+            + self.dendritic_ca_subunit.nonlinear
+            + self._backprop_gain * self.somatic_subunit.nonlinear
+        )
+
+        self.somatic_synapse.integrate_input(weighted_incoming_spikes[..., 1])
+        self.somatic_subunit.integrate_input(
+            self.somatic_synapse.linear + self.dendritic_nmda_subunit.nonlinear
+        )
 
 
 class SpikingNetwork:
