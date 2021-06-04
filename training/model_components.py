@@ -159,7 +159,8 @@ class NetworkArchitecture:
 
 class _TimeDependent:
     def __init__(self, initial_state):
-        self.current_state = initial_state
+        self.__initial_state = initial_state
+        self.current_state = self.__initial_state.clone()
         self.next_state = None
 
     def update(self):
@@ -167,6 +168,10 @@ class _TimeDependent:
         if self.next_state is None:
             raise RuntimeError('next_state is not set')
         self.current_state = self.next_state
+        self.next_state = None
+
+    def reset(self):
+        self.current_state = self.__initial_state.clone()
         self.next_state = None
 
 
@@ -240,6 +245,10 @@ class Subunit:
     def update(self):
         self._linear.update()
         self._nonlinear.update()
+
+    def reset(self):
+        self._linear.reset()
+        self._nonlinear.reset()
 
 
 T = TypeVar('T')
@@ -381,6 +390,10 @@ class Neuron:
         self.somatic_synapse.update()
         self.somatic_subunit.update()
 
+    def reset(self):
+        self.somatic_synapse.reset()
+        self.somatic_subunit.reset()
+
     def get_recorder(self) -> Recorder:
         return Recorder(self, self._attributes_to_record)
 
@@ -462,6 +475,11 @@ class TwoCompartmentNeuron(Neuron):
         super().update()
         self.dendritic_synapse.update()
         self.dendritic_subunit.update()
+
+    def reset(self):
+        super().reset()
+        self.dendritic_synapse.reset()
+        self.dendritic_subunit.reset()
 
 
 class RecurrentNeuron(TwoCompartmentNeuron):
@@ -563,7 +581,10 @@ class SpikingNetwork:
                 std=adjusted_weight_scale / np.sqrt(self.nb_units_by_layer[l]),
             )
 
-    def run_snn(self, inputs):
+    def run_snn(self, inputs, reset=True):
+        if reset:
+            self.reset()
+
         weighted_spikes_l1 = torch.einsum(
             # [b]atches, [t]ime, [i]nput units, [h]idden units
             "bti,ih->bth",
@@ -601,6 +622,10 @@ class SpikingNetwork:
         recorder.finalize()
 
         return recorder
+
+    def reset(self):
+        for u in self.units_by_layer:
+            u.reset()
 
 
 class TwoCompartmentSpikingNetwork(SpikingNetwork):
@@ -641,7 +666,10 @@ class TwoCompartmentSpikingNetwork(SpikingNetwork):
                 std=adjusted_weight_scale / np.sqrt(self.nb_units_by_layer[l]),
             )
 
-    def run_snn(self, inputs):
+    def run_snn(self, inputs, reset=True):
+        if reset:
+            self.reset()
+
         weighted_spikes_l1 = torch.einsum(
             # [b]atches, [t]ime, [i]nput units, [h]idden units, [c]ompartments
             "bti,ihc->bthc",
