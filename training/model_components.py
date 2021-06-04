@@ -154,7 +154,7 @@ class PRCNeuronParameters(ParallelNeuronParameters, RecurrentNeuronParameters):
 @dataclass
 class NetworkArchitecture:
     nb_units_by_layer: Sequence[int] = (100, 4, 2)
-    weight_scale: float = 7.0
+    weight_scale_by_layer: Sequence[float] = (7, 7)
 
 
 class _TimeDependent:
@@ -538,7 +538,8 @@ class SpikingNetwork:
             None for _ in range(len(self.nb_units_by_layer) - 1)
         ]
         self._initialize_weights(
-            network_architecture.weight_scale, neuron_parameters.tau_mem
+            network_architecture.weight_scale_by_layer,
+            neuron_parameters.tau_mem,
         )
 
         self.units_by_layer = []
@@ -561,14 +562,20 @@ class SpikingNetwork:
                     )
                 )
 
-    def _initialize_weights(self, weight_scale, membrane_time_constant):
+    def _initialize_weights(
+        self, weight_scale_by_layer, membrane_time_constant
+    ):
         discount = _time_constant_to_discount_factor(membrane_time_constant)
-        adjusted_weight_scale = weight_scale * (1.0 - discount)
 
-        assert len(self.nb_units_by_layer) == len(self.weights_by_layer) + 1
+        assert (
+            len(self.nb_units_by_layer)
+            == len(self.weights_by_layer) + 1
+            == len(weight_scale_by_layer) + 1
+        )
 
         # Initialize all weights from a normal distribution.
         for l in range(len(self.weights_by_layer)):
+            adjusted_weight_scale = weight_scale_by_layer[l] * (1.0 - discount)
             self.weights_by_layer[l] = torch.empty(
                 self.nb_units_by_layer[l : l + 2],
                 device=Environment.device,
@@ -631,13 +638,20 @@ class SpikingNetwork:
 class TwoCompartmentSpikingNetwork(SpikingNetwork):
     _hidden_neuron_cls = TwoCompartmentNeuron
 
-    def _initialize_weights(self, weight_scale, membrane_time_constant):
-        adjusted_weight_scale = weight_scale * (1.0 - membrane_time_constant)
+    def _initialize_weights(
+        self, weight_scale_by_layer, membrane_time_constant
+    ):
+        discount = _time_constant_to_discount_factor(membrane_time_constant)
 
-        assert len(self.nb_units_by_layer) == len(self.weights_by_layer) + 1
+        assert (
+            len(self.nb_units_by_layer)
+            == len(self.weights_by_layer) + 1
+            == len(weight_scale_by_layer) + 1
+        )
 
         # Initialize all weights from a normal distribution.
         for l in range(len(self.weights_by_layer)):
+            adjusted_weight_scale = weight_scale_by_layer[l] * (1.0 - discount)
             if l < len(self.weights_by_layer) - 1:
                 # All layers before output layer have two compartment neurons,
                 # so we add an extra dim to the weight array for inputs to
