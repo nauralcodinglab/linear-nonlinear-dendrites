@@ -403,7 +403,7 @@ class NonSpikingNeuron(Neuron):
             _zeros((Environment.batch_size, nb_units)),
             # Manually override spike and reset functions
             lambda linear: linear,
-            lambda linear, nonlinear: None,
+            lambda linear, nonlinear: linear,
         )
 
     @property
