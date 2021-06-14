@@ -48,9 +48,9 @@ class DefaultOptimizer:
         """
         for e in trange(epochs):
             actual_output = self._forward(input_)
-            loss_val = self.loss_fn(actual_output, desired_output)
 
             self.optimizer.zero_grad()
+            loss_val = self.loss_fn(actual_output, desired_output)
             loss_val.backward()
             self.optimizer.step()
 

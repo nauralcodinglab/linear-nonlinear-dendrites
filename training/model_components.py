@@ -27,7 +27,7 @@ class _SurrGradSpike(torch.autograd.Function):
 
     """
 
-    scale = 100.0  # controls steepness of surrogate gradient
+    scale = 10.0  # controls steepness of surrogate gradient
 
     @staticmethod
     def forward(ctx, input):
