@@ -10,6 +10,7 @@ from typing import (
 )
 from dataclasses import dataclass
 import warnings
+from copy import deepcopy
 
 import torch
 import numpy as np
@@ -129,6 +130,7 @@ class ParallelNeuronParameters(NeuronParameters):
     compartment.
 
     """
+
     dend_na_fn: Callable
     dend_ca_fn: Callable
     dend_nmda_fn: Callable
@@ -641,15 +643,17 @@ class SpikingNetwork:
         neuron_parameters: NeuronParameters,
         network_architecture: NetworkArchitecture,
     ):
-        self.nb_units_by_layer = network_architecture.nb_units_by_layer
+        self._params = deepcopy(neuron_parameters)
+        self._architecture = deepcopy(network_architecture)
+
+        self.nb_units_by_layer = self._architecture.nb_units_by_layer
 
         self.weights_by_layer = [
             None for _ in range(len(self.nb_units_by_layer) - 1)
         ]
-        self._initialize_weights(
-            network_architecture.weight_scale_by_layer,
-            neuron_parameters.tau_mem,
-        )
+        # Use reset_weights to initialize the weights from a normal
+        # distribution
+        self.reset_weights()
 
         self.units_by_layer = []
         self._initialize_units(neuron_parameters)
@@ -671,20 +675,20 @@ class SpikingNetwork:
                     )
                 )
 
-    def _initialize_weights(
-        self, weight_scale_by_layer, membrane_time_constant
-    ):
-        discount = _time_constant_to_discount_factor(membrane_time_constant)
+    def reset_weights(self,):
+        discount = _time_constant_to_discount_factor(self._params.tau_mem)
 
         assert (
             len(self.nb_units_by_layer)
             == len(self.weights_by_layer) + 1
-            == len(weight_scale_by_layer) + 1
+            == len(self._architecture.weight_scale_by_layer) + 1
         )
 
         # Initialize all weights from a normal distribution.
         for l in range(len(self.weights_by_layer)):
-            adjusted_weight_scale = weight_scale_by_layer[l] * (1.0 - discount)
+            adjusted_weight_scale = self._architecture.weight_scale_by_layer[
+                l
+            ] * (1.0 - discount)
             self.weights_by_layer[l] = torch.empty(
                 self.nb_units_by_layer[l : l + 2],
                 device=Environment.device,
@@ -747,20 +751,20 @@ class SpikingNetwork:
 class TwoCompartmentSpikingNetwork(SpikingNetwork):
     _hidden_neuron_cls = TwoCompartmentNeuron
 
-    def _initialize_weights(
-        self, weight_scale_by_layer, membrane_time_constant
-    ):
-        discount = _time_constant_to_discount_factor(membrane_time_constant)
+    def reset_weights(self):
+        discount = _time_constant_to_discount_factor(self._params.tau_mem)
 
         assert (
             len(self.nb_units_by_layer)
             == len(self.weights_by_layer) + 1
-            == len(weight_scale_by_layer) + 1
+            == len(self._architecture.weight_scale_by_layer) + 1
         )
 
         # Initialize all weights from a normal distribution.
         for l in range(len(self.weights_by_layer)):
-            adjusted_weight_scale = weight_scale_by_layer[l] * (1.0 - discount)
+            adjusted_weight_scale = self._architecture.weight_scale_by_layer[
+                l
+            ] * (1.0 - discount)
             if l < len(self.weights_by_layer) - 1:
                 # All layers before output layer have two compartment neurons,
                 # so we add an extra dim to the weight array for inputs to
