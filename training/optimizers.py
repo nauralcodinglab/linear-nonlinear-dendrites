@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-from tqdm.notebook import trange
+from tqdm import trange
+from tqdm.notebook import trange as nbtrange
 import numpy as np
 
 
@@ -34,7 +35,13 @@ class DefaultOptimizer:
         self.loss_history = []  # Will contain the loss at each epoch
         self.accuracy_history = []  # Classification accuracy at each epoch
 
-    def optimize(self, input_, desired_output, epochs: int):
+    def optimize(
+        self,
+        input_,
+        desired_output,
+        epochs: int,
+        progress_bar: str = 'notebook',
+    ):
         """Run the optimizer.
 
         Parameters
@@ -46,9 +53,13 @@ class DefaultOptimizer:
             forward_fn to compute the loss).
         epochs
             Number of epochs to run optimization.
+        progress_bar
+            Style of progress bar to show. Use 'notebook' if code is running in
+            a Jupyter notebook. Valid values are 'notebook', 'plain', and
+            'none'.
 
         """
-        for e in trange(epochs):
+        for _ in _PROGRESS_BAR_RANGE[progress_bar](epochs):
             actual_output = self._forward(input_)
 
             self.optimizer.zero_grad()
@@ -73,3 +84,10 @@ class DefaultOptimizer:
             (desired_output == predicted_category).detach().cpu().numpy()
         )
         return accuracy
+
+
+_PROGRESS_BAR_RANGE = {
+    'notebook': nbtrange,
+    'plain': trange,
+    'none': range,
+}
