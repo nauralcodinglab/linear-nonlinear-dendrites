@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from tqdm.notebook import trange
+import numpy as np
 
 
 class DefaultOptimizer:
@@ -31,6 +32,7 @@ class DefaultOptimizer:
 
         self.loss_fn = loss_fn
         self.loss_history = []  # Will contain the loss at each epoch
+        self.accuracy_history = []  # Classification accuracy at each epoch
 
     def optimize(self, input_, desired_output, epochs: int):
         """Run the optimizer.
@@ -55,3 +57,19 @@ class DefaultOptimizer:
             self.optimizer.step()
 
             self.loss_history.append(loss_val.item())
+            self.accuracy_history.append(
+                self._accuracy(actual_output, desired_output)
+            )
+
+    @staticmethod
+    def _accuracy(
+        actual_output: torch.Tensor, desired_output: torch.Tensor
+    ) -> float:
+        max_over_time, _ = torch.max(actual_output, 1)
+        # argmax over output units
+        _, predicted_category = torch.max(max_over_time, 1)
+
+        accuracy = np.mean(
+            (desired_output == predicted_category).detach().cpu().numpy()
+        )
+        return accuracy
