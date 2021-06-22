@@ -43,7 +43,7 @@ def main():
 def worker(rep_num: int):
     nets, optimizers = train_networks(rep_num)
     save_loss_history(
-        optimizers, f'memorization_training_results_{rep_num}.csv'
+        optimizers, f'../data/memorization_training_results_{rep_num}.csv'
     )
 
 

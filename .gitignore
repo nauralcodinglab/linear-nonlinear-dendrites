@@ -11,3 +11,6 @@ __pycache__
 
 # Local History for Visual Studio Code
 .history/
+
+# Local work including data files and plots
+data
