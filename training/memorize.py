@@ -32,6 +32,7 @@ from optimizers import DefaultOptimizer
 
 NETWORK_ARCHITECTURE = NetworkArchitecture()
 NUM_SEEDS = 10
+EPOCHS = 600
 
 
 def main():
@@ -48,7 +49,7 @@ def worker(rep_num: int):
 
 
 def train_networks(
-    rep_num: int, epochs: int = 600, set_seed: bool = True
+    rep_num: int, epochs: int = EPOCHS, set_seed: bool = True
 ) -> Tuple[Dict[str, SpikingNetwork], Dict[str, DefaultOptimizer]]:
     """Train a set of PRC models to memorize a random dataset."""
     if set_seed:
