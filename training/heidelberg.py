@@ -31,6 +31,10 @@ from model_components import (
     NetworkArchitecture,
     Environment,
 )
+from memorize import get_optimizers
+from memorize import (
+    classification_accuracy as _minibatch_classification_accuracy,
+)
 
 
 class DefaultOptimizer:
@@ -279,11 +283,11 @@ def train_networks(
 
     for label in nets:
         print(f'Training \"{label}\" - {rep_num}')
-        initial_train_accuracy = compute_classification_accuracy(x_train, y_train, nets[label])
-        initial_test_accuracy = compute_classification_accuracy(x_test, y_test, nets[label])
+        initial_train_accuracy = classification_accuracy(x_train, y_train, nets[label])
+        initial_test_accuracy = classification_accuracy(x_test, y_test, nets[label])
         optimizers[label].optimize(epochs)
-        final_train_accuracy = compute_classification_accuracy(x_train, y_train, nets[label])
-        final_test_accuracy = compute_classification_accuracy(x_test, y_test, nets[label])
+        final_train_accuracy = classification_accuracy(x_train, y_train, nets[label])
+        final_test_accuracy = classification_accuracy(x_test, y_test, nets[label])
         print(
             f'Finished training \"{label}\" - {rep_num}; '
             f'Initial Train Acc. {100 * initial_train_accuracy:.1f}%, '
@@ -369,33 +373,16 @@ def get_networks() -> Dict[str, SpikingNetwork]:
     }
     return nets
 
-def compute_classification_accuracy(x_data, y_data, net: SpikingNetwork) -> float:
+def classification_accuracy(x_data, y_data, net: SpikingNetwork) -> float:
     """ Computing classification accuracy on supplied data for each of the networks. """
-    accs = []
+    accuracies = []
     for x_local, y_local in sparse_data_generator_from_hdf5_spikes(x_data, y_data, Environment_batch_size, Environment_nb_steps, nb_inputs, max_time, shuffle=False):
-        output,_ = net.run_snn(x_local.to_dense())
-        m,_= torch.max(output,1) # max over time
-        _,am=torch.max(m,1)      # argmax over output units
-        tmp = np.mean((y_local==am).detach().cpu().numpy()) # compare to labels
-        accs.append(tmp)
-    return np.mean(accs)
-
-
-def get_optimizers(
-    nets: Dict[str, SpikingNetwork]
-) -> Dict[str, DefaultOptimizer]:
-    return {
-        key: DefaultOptimizer(
-            _get_feedforward_func(nets[key]), nets[key].weights_by_layer
+        accuracies.append(
+            _minibatch_classification_accuracy(
+                x_local.to_dense(), y_local, net
+            )
         )
-        for key in nets
-    }
-
-def _get_feedforward_func(net):
-    def feedforward(x):
-        return net.run_snn(x, reset=True)[0]
-
-    return feedforward
+    return np.mean(accuracies)
 
 if __name__ == '__main__':
     main()
