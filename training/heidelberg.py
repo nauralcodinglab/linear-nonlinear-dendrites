@@ -53,10 +53,7 @@ class DefaultOptimizer:
                 for x_local, y_local in sparse_data_generator_from_hdf5_spikes(
                     x_train,
                     y_train,
-                    Environment_batch_size,
-                    Environment_nb_steps,
-                    nb_inputs,
-                    max_time,
+                    SWEEP_DURATION,
                 ):
                     actual_output = self._forward(x_local.to_dense())
                     m, _ = torch.max(actual_output, 1)
@@ -78,10 +75,8 @@ class DefaultOptimizer:
             self.loss_history.append(loss_val.item())
 
 
-network_architecture = NetworkArchitecture()
+NETWORK_ARCHITECTURE = NetworkArchitecture((700, 200, 20))
 Environment.nb_steps = 100
-network_architecture.nb_units_by_layer = (700, 200, 20)
-nb_inputs = network_architecture.nb_units_by_layer[0]
 NUM_SEEDS = 10
 EPOCHS = 300
 
@@ -247,19 +242,13 @@ y_train = train_file['labels']
 x_test = test_file['spikes']
 y_test = test_file['labels']
 
-Environment_batch_size = Environment.batch_size
-Environment_nb_steps = Environment.nb_steps
-network_architecture_nb_units_by_layer = network_architecture.nb_units_by_layer
-max_time = 1.4
+SWEEP_DURATION = 1.4
 
 
 def sparse_data_generator_from_hdf5_spikes(
     X,
     y,
-    Environment_batch_size,
-    Environment_nb_steps,
-    network_architecture_nb_units_by_layer,
-    max_time,
+    sweep_duration: float,
     shuffle=True,
 ):
     """ This generator takes a spike dataset and generates spiking network input as sparse tensors.
@@ -277,7 +266,7 @@ def sparse_data_generator_from_hdf5_spikes(
     firing_times = X['times']
     units_fired = X['units']
 
-    time_bins = np.linspace(0, max_time, num=Environment.nb_steps)
+    time_bins = np.linspace(0, sweep_duration, num=Environment.nb_steps)
 
     if shuffle:
         np.random.shuffle(sample_index)
@@ -311,7 +300,7 @@ def sparse_data_generator_from_hdf5_spikes(
                 [
                     Environment.batch_size,
                     Environment.nb_steps,
-                    network_architecture_nb_units_by_layer,
+                    NETWORK_ARCHITECTURE.nb_units_by_layer[0],
                 ]
             ),
         ).to(device)
@@ -322,17 +311,11 @@ def sparse_data_generator_from_hdf5_spikes(
         counter += 1
 
 
-nb_inputs = network_architecture.nb_units_by_layer[0]
-
-
 def get_mini_batch(x_data, y_data, shuffle=False):
     for ret in sparse_data_generator_from_hdf5_spikes(
         x_data,
         y_data,
-        Environment_batch_size,
-        Environment_nb_steps,
-        nb_inputs,
-        max_time,
+        SWEEP_DURATION,
         shuffle=shuffle,
     ):
         return ret
@@ -408,6 +391,7 @@ def save_loss_history(
     data_df = pd.DataFrame(data)
     data_df.to_csv(fname, index=False)
 
+
 def get_networks() -> Dict[str, SpikingNetwork]:
     """Get a set of spiking networks to train."""
     somatic_spike_fn = get_spike_fn(threshold=15)
@@ -437,13 +421,13 @@ def get_networks() -> Dict[str, SpikingNetwork]:
         tau_dend_nmda=80e-3,
     )
 
-    simple_network_architecture = deepcopy(network_architecture)
+    simple_network_architecture = deepcopy(NETWORK_ARCHITECTURE)
     simple_network_architecture.weight_scale_by_layer = (3, 7)
 
-    two_compartment_network_architecture = deepcopy(network_architecture)
+    two_compartment_network_architecture = deepcopy(NETWORK_ARCHITECTURE)
     two_compartment_network_architecture.weight_scale_by_layer = (0.5, 7)
 
-    parallel_network_architecture = deepcopy(network_architecture)
+    parallel_network_architecture = deepcopy(NETWORK_ARCHITECTURE)
     parallel_network_architecture.weight_scale_by_layer = (0.02, 7)
 
     nets = {
@@ -472,10 +456,7 @@ def classification_accuracy(x_data, y_data, net: SpikingNetwork) -> float:
     for x_local, y_local in sparse_data_generator_from_hdf5_spikes(
         x_data,
         y_data,
-        Environment_batch_size,
-        Environment_nb_steps,
-        nb_inputs,
-        max_time,
+        SWEEP_DURATION,
         shuffle=False,
     ):
         accuracies.append(
