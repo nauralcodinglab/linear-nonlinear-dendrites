@@ -1,18 +1,21 @@
 import os
 from copy import deepcopy
-
 from typing import Tuple, Dict
-from copy import deepcopy
 import multiprocessing as mp
 
 import numpy as np
 import pandas as pd
-
 import torch
 import torch.nn as nn
-
-import sys
-sys.path.append(os.path.abspath(r"C:\Users\Anish Goel\Downloads\lnl_project\model"))
+import h5py
+import gzip
+import shutil
+import hashlib
+import urllib.request
+from six.moves.urllib.error import HTTPError
+from six.moves.urllib.error import URLError
+from six.moves.urllib.request import urlretrieve
+from tqdm import trange
 
 from model_components import (
     get_spike_fn,
@@ -29,16 +32,6 @@ from model_components import (
     Environment,
 )
 
-import h5py
-import urllib.request
-import gzip, shutil
-import hashlib
-
-from six.moves.urllib.error import HTTPError
-from six.moves.urllib.error import URLError
-from six.moves.urllib.request import urlretrieve
-
-from tqdm import trange
 
 class DefaultOptimizer:
     def __init__(self, forward_fn, params):
