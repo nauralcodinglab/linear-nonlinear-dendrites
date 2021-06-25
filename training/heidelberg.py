@@ -80,11 +80,6 @@ Environment.nb_steps = 100
 NUM_SEEDS = 10
 EPOCHS = 300
 
-if torch.cuda.is_available():
-    device = torch.device("cuda")
-else:
-    device = torch.device("cpu")
-
 
 def get_shd_dataset(cache_dir, cache_subdir):
 
@@ -246,10 +241,7 @@ SWEEP_DURATION = 1.4
 
 
 def sparse_data_generator_from_hdf5_spikes(
-    X,
-    y,
-    sweep_duration: float,
-    shuffle=True,
+    X, y, sweep_duration: float, shuffle=True,
 ):
     """ This generator takes a spike dataset and generates spiking network input as sparse tensors.
 
@@ -290,8 +282,8 @@ def sparse_data_generator_from_hdf5_spikes(
             coo[1].extend(times)
             coo[2].extend(units)
 
-        i = torch.LongTensor(coo).to(device)
-        v = torch.FloatTensor(np.ones(len(coo[0]))).to(device)
+        i = torch.LongTensor(coo).to(Environment.device)
+        v = torch.FloatTensor(np.ones(len(coo[0]))).to(Environment.device)
 
         X_batch = torch.sparse.FloatTensor(
             i,
@@ -303,10 +295,12 @@ def sparse_data_generator_from_hdf5_spikes(
                     NETWORK_ARCHITECTURE.nb_units_by_layer[0],
                 ]
             ),
-        ).to(device)
-        y_batch = torch.tensor(labels_[batch_index], device=device)
+        ).to(Environment.device)
+        y_batch = torch.tensor(labels_[batch_index], device=Environment.device)
 
-        yield X_batch.to(device=device), y_batch.to(device=device)
+        yield X_batch.to(device=Environment.device), y_batch.to(
+            device=Environment.device
+        )
 
         counter += 1
 
