@@ -41,16 +41,23 @@ class DefaultOptimizer:
     def __init__(self, forward_fn, params):
         self._forward = forward_fn
         self.params = params
-        self.optimizer = torch.optim.Adamax(params, lr=2e-3, betas=(0.9, 0.999))
+        self.optimizer = torch.optim.Adamax(
+            params, lr=2e-3, betas=(0.9, 0.999)
+        )
 
         log_softmax_fn = nn.LogSoftmax(dim=1)
         neg_log_lik_fn = nn.NLLLoss()
 
         def loss_fn(epochs):
             for e in trange(epochs):
-                for x_local, y_local in sparse_data_generator_from_hdf5_spikes(x_train, y_train, Environment_batch_size,
-                                                                               Environment_nb_steps, nb_inputs,
-                                                                               max_time):
+                for x_local, y_local in sparse_data_generator_from_hdf5_spikes(
+                    x_train,
+                    y_train,
+                    Environment_batch_size,
+                    Environment_nb_steps,
+                    nb_inputs,
+                    max_time,
+                ):
                     actual_output = self._forward(x_local.to_dense())
                     m, _ = torch.max(actual_output, 1)
                     log_p_y = log_softmax_fn(m)
@@ -69,6 +76,7 @@ class DefaultOptimizer:
             self.optimizer.step()
 
             self.loss_history.append(loss_val.item())
+
 
 network_architecture = NetworkArchitecture()
 Environment.nb_steps = 100
@@ -92,29 +100,55 @@ def get_shd_dataset(cache_dir, cache_subdir):
     response = urllib.request.urlopen("%s/md5sums.txt" % base_url)
     data = response.read()
     lines = data.decode('utf-8').split("\n")
-    file_hashes = {line.split()[1]: line.split()[0] for line in lines if len(line.split()) == 2}
+    file_hashes = {
+        line.split()[1]: line.split()[0]
+        for line in lines
+        if len(line.split()) == 2
+    }
     # Download the Spiking Heidelberg Digits (SHD) dataset
-    files = ["shd_train.h5.gz",
-            "shd_test.h5.gz",
-            ]
+    files = [
+        "shd_train.h5.gz",
+        "shd_test.h5.gz",
+    ]
     for fn in files:
         origin = "%s/%s" % (base_url, fn)
-        hdf5_file_path = get_and_gunzip(origin, fn, md5hash=file_hashes[fn], cache_dir=cache_dir,
-                                            cache_subdir=cache_subdir)
+        hdf5_file_path = get_and_gunzip(
+            origin,
+            fn,
+            md5hash=file_hashes[fn],
+            cache_dir=cache_dir,
+            cache_subdir=cache_subdir,
+        )
         print("File %s decompressed to:" % (fn))
         print(hdf5_file_path)
 
-def get_and_gunzip(origin, filename, md5hash=None, cache_dir=None, cache_subdir=None):
-    gz_file_path = get_file(filename, origin, md5_hash=md5hash, cache_dir=cache_dir, cache_subdir=cache_subdir)
+
+def get_and_gunzip(
+    origin, filename, md5hash=None, cache_dir=None, cache_subdir=None
+):
+    gz_file_path = get_file(
+        filename,
+        origin,
+        md5_hash=md5hash,
+        cache_dir=cache_dir,
+        cache_subdir=cache_subdir,
+    )
     hdf5_file_path = gz_file_path
-    if not os.path.isfile(hdf5_file_path) or os.path.getctime(gz_file_path) > os.path.getctime(hdf5_file_path):
+    if not os.path.isfile(hdf5_file_path) or os.path.getctime(
+        gz_file_path
+    ) > os.path.getctime(hdf5_file_path):
         print("Decompressing %s" % gz_file_path)
-        with gzip.open(gz_file_path, 'r') as f_in, open(hdf5_file_path, 'wb') as f_out:
+        with gzip.open(gz_file_path, 'r') as f_in, open(
+            hdf5_file_path, 'wb'
+        ) as f_out:
             shutil.copyfileobj(f_in, f_out)
     return hdf5_file_path
 
+
 def validate_file(fpath, file_hash, algorithm='auto', chunk_size=65535):
-    if (algorithm == 'sha256') or (algorithm == 'auto' and len(file_hash) == 64):
+    if (algorithm == 'sha256') or (
+        algorithm == 'auto' and len(file_hash) == 64
+    ):
         hasher = 'sha256'
     else:
         hasher = 'md5'
@@ -123,6 +157,7 @@ def validate_file(fpath, file_hash, algorithm='auto', chunk_size=65535):
         return True
     else:
         return False
+
 
 def _hash_file(fpath, algorithm='sha256', chunk_size=65535):
     if (algorithm == 'sha256') or (algorithm == 'auto' and len(hash) == 64):
@@ -136,15 +171,18 @@ def _hash_file(fpath, algorithm='sha256', chunk_size=65535):
 
     return hasher.hexdigest()
 
-def get_file(fname,
-                origin,
-                md5_hash=None,
-                file_hash=None,
-                cache_subdir='datasets',
-                hash_algorithm='auto',
-                extract=False,
-                archive_format='auto',
-                cache_dir=None):
+
+def get_file(
+    fname,
+    origin,
+    md5_hash=None,
+    file_hash=None,
+    cache_subdir='datasets',
+    hash_algorithm='auto',
+    extract=False,
+    archive_format='auto',
+    cache_dir=None,
+):
     if cache_dir is None:
         cache_dir = os.path.join(os.path.expanduser('~'), '.data-cache')
     if md5_hash is not None and file_hash is None:
@@ -163,10 +201,14 @@ def get_file(fname,
         # File found; verify integrity if a hash was provided.
         if file_hash is not None:
             if not validate_file(fpath, file_hash, algorithm=hash_algorithm):
-                print('A local file was found, but it seems to be '
-                        'incomplete or outdated because the ' + hash_algorithm +
-                        ' file hash does not match the original value of ' + file_hash +
-                        ' so we will re-download the data.')
+                print(
+                    'A local file was found, but it seems to be '
+                    'incomplete or outdated because the '
+                    + hash_algorithm
+                    + ' file hash does not match the original value of '
+                    + file_hash
+                    + ' so we will re-download the data.'
+                )
                 download = True
     else:
         download = True
@@ -188,12 +230,17 @@ def get_file(fname,
 
     return fpath
 
+
 cache_dir = os.path.expanduser("~/data")
 cache_subdir = "hdspikes"
 get_shd_dataset(cache_dir, cache_subdir)
 
-train_file = h5py.File(os.path.join(cache_dir, cache_subdir, 'shd_train.h5'), 'r')
-test_file = h5py.File(os.path.join(cache_dir, cache_subdir, 'shd_test.h5'), 'r')
+train_file = h5py.File(
+    os.path.join(cache_dir, cache_subdir, 'shd_train.h5'), 'r'
+)
+test_file = h5py.File(
+    os.path.join(cache_dir, cache_subdir, 'shd_test.h5'), 'r'
+)
 
 x_train = train_file['spikes']
 y_train = train_file['labels']
@@ -202,12 +249,19 @@ y_test = test_file['labels']
 
 Environment_batch_size = Environment.batch_size
 Environment_nb_steps = Environment.nb_steps
-network_architecture_nb_units_by_layer= network_architecture.nb_units_by_layer
+network_architecture_nb_units_by_layer = network_architecture.nb_units_by_layer
 max_time = 1.4
 
 
-def sparse_data_generator_from_hdf5_spikes(X, y, Environment_batch_size, Environment_nb_steps,
-                                           network_architecture_nb_units_by_layer, max_time, shuffle=True):
+def sparse_data_generator_from_hdf5_spikes(
+    X,
+    y,
+    Environment_batch_size,
+    Environment_nb_steps,
+    network_architecture_nb_units_by_layer,
+    max_time,
+    shuffle=True,
+):
     """ This generator takes a spike dataset and generates spiking network input as sparse tensors.
 
     Args:
@@ -231,7 +285,11 @@ def sparse_data_generator_from_hdf5_spikes(X, y, Environment_batch_size, Environ
     total_batch_count = 0
     counter = 0
     while counter < number_of_batches:
-        batch_index = sample_index[Environment.batch_size * counter:Environment.batch_size * (counter + 1)]
+        batch_index = sample_index[
+            Environment.batch_size
+            * counter : Environment.batch_size
+            * (counter + 1)
+        ]
 
         coo = [[] for i in range(3)]
         for bc, idx in enumerate(batch_index):
@@ -246,30 +304,56 @@ def sparse_data_generator_from_hdf5_spikes(X, y, Environment_batch_size, Environ
         i = torch.LongTensor(coo).to(device)
         v = torch.FloatTensor(np.ones(len(coo[0]))).to(device)
 
-        X_batch = torch.sparse.FloatTensor(i, v, torch.Size(
-            [Environment.batch_size, Environment.nb_steps, network_architecture_nb_units_by_layer])).to(device)
+        X_batch = torch.sparse.FloatTensor(
+            i,
+            v,
+            torch.Size(
+                [
+                    Environment.batch_size,
+                    Environment.nb_steps,
+                    network_architecture_nb_units_by_layer,
+                ]
+            ),
+        ).to(device)
         y_batch = torch.tensor(labels_[batch_index], device=device)
 
         yield X_batch.to(device=device), y_batch.to(device=device)
 
         counter += 1
 
+
 nb_inputs = network_architecture.nb_units_by_layer[0]
 
+
 def get_mini_batch(x_data, y_data, shuffle=False):
-    for ret in sparse_data_generator_from_hdf5_spikes(x_data, y_data, Environment_batch_size, Environment_nb_steps, nb_inputs, max_time, shuffle=shuffle):
+    for ret in sparse_data_generator_from_hdf5_spikes(
+        x_data,
+        y_data,
+        Environment_batch_size,
+        Environment_nb_steps,
+        nb_inputs,
+        max_time,
+        shuffle=shuffle,
+    ):
         return ret
 
+
 x_batch, y_batch = get_mini_batch(x_test, y_test)
+
 
 def main():
     """Run training loop across multiple random seeds in parallel."""
     with mp.Pool(3) as pool:
         pool.map(worker, range(NUM_SEEDS))
 
+
 def worker(rep_num: int):
     nets, optimizers = train_networks(rep_num)
-    save_loss_history(optimizers, r'C:\Users\Anish Goel\Downloads\lnl_project\memorization_training_results_{rep_num}.csv')
+    save_loss_history(
+        optimizers,
+        r'C:\Users\Anish Goel\Downloads\lnl_project\memorization_training_results_{rep_num}.csv',
+    )
+
 
 def train_networks(
     rep_num: int, epochs: int = EPOCHS, set_seed: bool = True
@@ -283,11 +367,19 @@ def train_networks(
 
     for label in nets:
         print(f'Training \"{label}\" - {rep_num}')
-        initial_train_accuracy = classification_accuracy(x_train, y_train, nets[label])
-        initial_test_accuracy = classification_accuracy(x_test, y_test, nets[label])
+        initial_train_accuracy = classification_accuracy(
+            x_train, y_train, nets[label]
+        )
+        initial_test_accuracy = classification_accuracy(
+            x_test, y_test, nets[label]
+        )
         optimizers[label].optimize(epochs)
-        final_train_accuracy = classification_accuracy(x_train, y_train, nets[label])
-        final_test_accuracy = classification_accuracy(x_test, y_test, nets[label])
+        final_train_accuracy = classification_accuracy(
+            x_train, y_train, nets[label]
+        )
+        final_test_accuracy = classification_accuracy(
+            x_test, y_test, nets[label]
+        )
         print(
             f'Finished training \"{label}\" - {rep_num}; '
             f'Initial Train Acc. {100 * initial_train_accuracy:.1f}%, '
@@ -373,16 +465,26 @@ def get_networks() -> Dict[str, SpikingNetwork]:
     }
     return nets
 
+
 def classification_accuracy(x_data, y_data, net: SpikingNetwork) -> float:
     """ Computing classification accuracy on supplied data for each of the networks. """
     accuracies = []
-    for x_local, y_local in sparse_data_generator_from_hdf5_spikes(x_data, y_data, Environment_batch_size, Environment_nb_steps, nb_inputs, max_time, shuffle=False):
+    for x_local, y_local in sparse_data_generator_from_hdf5_spikes(
+        x_data,
+        y_data,
+        Environment_batch_size,
+        Environment_nb_steps,
+        nb_inputs,
+        max_time,
+        shuffle=False,
+    ):
         accuracies.append(
             _minibatch_classification_accuracy(
                 x_local.to_dense(), y_local, net
             )
         )
     return np.mean(accuracies)
+
 
 if __name__ == '__main__':
     main()
