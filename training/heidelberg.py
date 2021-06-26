@@ -34,7 +34,6 @@ from model_components import (
     NetworkArchitecture,
     Environment,
 )
-from memorize import get_optimizers
 from memorize import (
     classification_accuracy as _minibatch_classification_accuracy,
 )
@@ -388,7 +387,7 @@ def train_networks(
                 data.x_test, data.y_test, nets[label]
             )
             optimizers[label].optimize(
-                data.x_train, data.y_train, epochs, 'none'
+                data.x_train, data.y_train, epochs
             )
             final_train_accuracy = classification_accuracy(
                 data.x_train, data.y_train, nets[label]
