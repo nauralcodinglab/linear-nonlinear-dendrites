@@ -3,6 +3,7 @@ from copy import deepcopy
 from typing import Tuple, Dict, Optional
 import multiprocessing as mp
 import itertools
+import json
 
 import numpy as np
 import pandas as pd
@@ -95,10 +96,12 @@ class DefaultOptimizer:
 
         self.loss_fn = loss_fn
         self.loss_history = []
+        self.accuracy_history = []  # Classification accuracy at each epoch
 
     def optimize(self, input_, desired_output, epochs):
         for e in trange(epochs):
             batch_loss = []
+            batch_accuracy = []
             for batch_x, batch_y in sparse_data_generator_from_hdf5_spikes(
                 input_, desired_output, SWEEP_DURATION, shuffle=True
             ):
@@ -110,8 +113,23 @@ class DefaultOptimizer:
                 self.optimizer.step()
 
                 batch_loss.append(loss_val.item())
+                batch_accuracy.append(self._accuracy(actual_output, batch_y))
 
             self.loss_history.append(np.mean(batch_loss))
+            self.accuracy_history.append(np.mean(batch_accuracy))
+
+    @staticmethod
+    def _accuracy(
+        actual_output: torch.Tensor, desired_output: torch.Tensor
+    ) -> float:
+        max_over_time, _ = torch.max(actual_output, 1)
+        # argmax over output units
+        _, predicted_category = torch.max(max_over_time, 1)
+
+        accuracy = np.mean(
+            (desired_output == predicted_category).detach().cpu().numpy()
+        )
+        return accuracy
 
 
 def get_shd_dataset(cache_dir, cache_subdir):
@@ -331,8 +349,9 @@ def worker(rep_num: int):
     nets, optimizers = train_networks(rep_num)
     save_loss_history(
         optimizers,
-        r'C:\Users\Anish Goel\Downloads\lnl_project\memorization_training_results_{rep_num}.csv',
+        f'heidelberg_training_results_{rep_num}.csv',
     )
+    save_test_accuracy(optimizers, f'heidelberg_test_accuracy_{rep_num}.json')
 
 
 def train_networks(
@@ -365,6 +384,10 @@ def train_networks(
                 data.x_test, data.y_test, nets[label]
             )
 
+            optimizers[label].test_accuracy = {
+                'initial': initial_test_accuracy,
+                'final': final_test_accuracy
+            }
             print(
                 f'Finished training \"{label}\" - {rep_num}; '
                 f'Initial Train Acc. {100 * initial_train_accuracy:.1f}%, '
@@ -380,18 +403,31 @@ def save_loss_history(
     optimizers: Dict[str, DefaultOptimizer], fname: str
 ) -> None:
     """Save loss during training to CSV file."""
-    data = {'model_name': [], 'epoch': [], 'loss': []}
+    data = {'model_name': [], 'epoch': [], 'loss': [], 'accuracy': []}
 
     for label, optimizer in optimizers.items():
+        assert len(optimizer.loss_history) == len(optimizer.accuracy_history)
         num_epochs = len(optimizer.loss_history)
 
         data['model_name'].extend([label] * num_epochs)
         data['epoch'].extend(range(num_epochs))
         data['loss'].extend(optimizer.loss_history)
-
+        data['accuracy'].extend(optimizer.accuracy_history)
 
     data_df = pd.DataFrame(data)
     data_df.to_csv(fname, index=False)
+
+
+def save_test_accuracy(
+    optimizers: Dict[str, DefaultOptimizer], fname: str
+) -> None:
+    data = {}
+    for label, optimizer in optimizers.items():
+        data[label] = optimizer.test_accuracy
+
+    with open(fname, 'w') as f:
+        json.dump(data, f)
+        f.close()
 
 
 def get_networks() -> Dict[str, SpikingNetwork]:
@@ -456,10 +492,7 @@ def classification_accuracy(x_data, y_data, net: SpikingNetwork) -> float:
     """ Computing classification accuracy on supplied data for each of the networks. """
     accuracies = []
     for x_local, y_local in sparse_data_generator_from_hdf5_spikes(
-        x_data,
-        y_data,
-        SWEEP_DURATION,
-        shuffle=False,
+        x_data, y_data, SWEEP_DURATION, shuffle=False,
     ):
         accuracies.append(
             _minibatch_classification_accuracy(
