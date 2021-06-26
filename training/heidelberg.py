@@ -108,7 +108,7 @@ class DefaultOptimizer:
             for batch_x, batch_y in sparse_data_generator_from_hdf5_spikes(
                 input_, desired_output, SWEEP_DURATION, shuffle=True
             ):
-                actual_output = self._forward(batch_x)
+                actual_output = self._forward(batch_x.to_dense())
 
                 self.optimizer.zero_grad()
                 loss_val = self.loss_fn(actual_output, batch_y)
