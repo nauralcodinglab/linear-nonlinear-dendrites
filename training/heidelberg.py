@@ -231,8 +231,9 @@ def get_file(
         file_hash = md5_hash
         hash_algorithm = 'md5'
     datadir_base = os.path.expanduser(cache_dir)
-    # FIXME: Fails if cache_dir doesn't already exist
-    if not os.access(datadir_base, os.W_OK):
+    if not os.path.exists(datadir_base):
+        os.makedirs(datadir_base)
+    elif not os.access(datadir_base, os.W_OK):
         datadir_base = os.path.join('/tmp', '.data-cache')
     datadir = os.path.join(datadir_base, cache_subdir)
     os.makedirs(datadir, exist_ok=True)
