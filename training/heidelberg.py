@@ -515,5 +515,23 @@ def classification_accuracy(x_data, y_data, net: SpikingNetwork) -> float:
     return np.mean(accuracies)
 
 
+def get_optimizers(
+    nets: Dict[str, SpikingNetwork]
+) -> Dict[str, DefaultOptimizer]:
+    return {
+        key: DefaultOptimizer(
+            _get_feedforward_func(nets[key]), nets[key].weights_by_layer
+        )
+        for key in nets
+    }
+
+
+def _get_feedforward_func(net):
+    def feedforward(x):
+        return net.run_snn(x, reset=True)[0]
+
+    return feedforward
+
+
 if __name__ == '__main__':
     main()
