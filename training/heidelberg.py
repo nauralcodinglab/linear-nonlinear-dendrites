@@ -305,19 +305,6 @@ def sparse_data_generator_from_hdf5_spikes(
         counter += 1
 
 
-def get_mini_batch(x_data, y_data, shuffle=False):
-    for ret in sparse_data_generator_from_hdf5_spikes(
-        x_data,
-        y_data,
-        SWEEP_DURATION,
-        shuffle=shuffle,
-    ):
-        return ret
-
-
-x_batch, y_batch = get_mini_batch(x_test, y_test)
-
-
 def main():
     """Run training loop across multiple random seeds in parallel."""
     with mp.Pool(3) as pool:
