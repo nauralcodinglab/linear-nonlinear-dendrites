@@ -42,7 +42,7 @@ from memorize import (
 NETWORK_ARCHITECTURE = NetworkArchitecture((700, 200, 20))
 Environment.nb_steps = 100
 NUM_SEEDS = 10
-EPOCHS = 300
+EPOCHS = 200
 SWEEP_DURATION = 1.4
 
 CACHE_DIR = os.path.expanduser("/tmp/lnl-dendrite-data")
@@ -397,8 +397,8 @@ def train_networks(
             )
 
             optimizers[label].test_accuracy = {
-                'initial': initial_test_accuracy,
-                'final': final_test_accuracy
+                'initial': float(initial_test_accuracy),
+                'final': float(final_test_accuracy),
             }
             print(
                 f'Finished training \"{label}\" - {rep_num}; '
