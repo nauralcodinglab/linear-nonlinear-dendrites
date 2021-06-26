@@ -48,31 +48,31 @@ class DefaultOptimizer:
         log_softmax_fn = nn.LogSoftmax(dim=1)
         neg_log_lik_fn = nn.NLLLoss()
 
-        def loss_fn(epochs):
-            for e in trange(epochs):
-                for x_local, y_local in sparse_data_generator_from_hdf5_spikes(
-                    x_train,
-                    y_train,
-                    SWEEP_DURATION,
-                ):
-                    actual_output = self._forward(x_local.to_dense())
-                    m, _ = torch.max(actual_output, 1)
-                    log_p_y = log_softmax_fn(m)
-
-                    loss_val = neg_log_lik_fn(log_p_y, y_local.long())
-                    return loss_val
+        def loss_fn(actual_output, desired_output):
+            m, _ = torch.max(actual_output, 1)
+            log_p_y = log_softmax_fn(m)
+            loss_val = neg_log_lik_fn(log_p_y, desired_output.long())
+            return loss_val
 
         self.loss_fn = loss_fn
         self.loss_history = []
 
-    def optimize(self, epochs):
+    def optimize(self, input_, desired_output, epochs):
         for e in trange(epochs):
-            loss_val = self.loss_fn(epochs)
-            self.optimizer.zero_grad()
-            loss_val.backward()
-            self.optimizer.step()
+            batch_loss = []
+            for batch_x, batch_y in sparse_data_generator_from_hdf5_spikes(
+                input_, desired_output, SWEEP_DURATION, shuffle=True
+            ):
+                actual_output = self._forward(batch_x)
 
-            self.loss_history.append(loss_val.item())
+                self.optimizer.zero_grad()
+                loss_val = self.loss_fn(actual_output, batch_y)
+                loss_val.backward()
+                self.optimizer.step()
+
+                batch_loss.append(loss_val.item())
+
+            self.loss_history.append(np.mean(batch_loss))
 
 
 NETWORK_ARCHITECTURE = NetworkArchitecture((700, 200, 20))
