@@ -175,7 +175,13 @@ def get_and_gunzip(
         cache_dir=cache_dir,
         cache_subdir=cache_subdir,
     )
-    hdf5_file_path = gz_file_path
+    if gz_file_path.lower().endswith('.gz'):
+        hdf5_file_path = gz_file_path[:-3]
+        assert hdf5_file_path.lower().endswith(('.h5', '.hdf5'))
+    else:
+        raise RuntimeError(
+            f'Expected gz_file_path to end with .gz: {gz_file_path}'
+        )
     if not os.path.isfile(hdf5_file_path) or os.path.getctime(
         gz_file_path
     ) > os.path.getctime(hdf5_file_path):
