@@ -1,7 +1,8 @@
 import os
 from copy import deepcopy
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Optional
 import multiprocessing as mp
+import itertools
 
 import numpy as np
 import pandas as pd
@@ -35,6 +36,44 @@ from memorize import get_optimizers
 from memorize import (
     classification_accuracy as _minibatch_classification_accuracy,
 )
+
+
+NETWORK_ARCHITECTURE = NetworkArchitecture((700, 200, 20))
+Environment.nb_steps = 100
+NUM_SEEDS = 10
+EPOCHS = 300
+SWEEP_DURATION = 1.4
+
+CACHE_DIR = os.path.expanduser("~/lnl-dendrite-data")
+CACHE_SUBDIR = "hdspikes"
+
+class Data:
+    def __init__(self, path_to_train_data: str, path_to_test_data: str):
+        self._path_to_train = path_to_train_data
+        self._path_to_test = path_to_test_data
+
+        self._train_file: Optional[h5py.File] = None
+        self._test_file: Optional[h5py.File] = None
+
+        self.x_train: Optional[h5py.Dataset] = None
+        self.y_train: Optional[h5py.Dataset] = None
+        self.x_test: Optional[h5py.Dataset] = None
+        self.y_test: Optional[h5py.Dataset] = None
+
+    def __enter__(self):
+        self._train_file = h5py.File(self._path_to_train, 'r')
+        self.x_train = self._train_file['spikes']
+        self.y_train = self._train_file['labels']
+
+        self._test_file = h5py.File(self._path_to_test, 'r')
+        self.x_test = self._test_file['spikes']
+        self.y_test = self._test_file['labels']
+
+    def __exit__(self, *err_args):
+        self._train_file.close()
+        self._test_file.close()
+        for a, b in itertools.product(['x', 'y'], ['train', 'test']):
+            setattr(self, '_'.join((a, b)), None)
 
 
 class DefaultOptimizer:
@@ -73,12 +112,6 @@ class DefaultOptimizer:
                 batch_loss.append(loss_val.item())
 
             self.loss_history.append(np.mean(batch_loss))
-
-
-NETWORK_ARCHITECTURE = NetworkArchitecture((700, 200, 20))
-Environment.nb_steps = 100
-NUM_SEEDS = 10
-EPOCHS = 300
 
 
 def get_shd_dataset(cache_dir, cache_subdir):
@@ -221,24 +254,6 @@ def get_file(
     return fpath
 
 
-cache_dir = os.path.expanduser("~/data")
-cache_subdir = "hdspikes"
-get_shd_dataset(cache_dir, cache_subdir)
-
-train_file = h5py.File(
-    os.path.join(cache_dir, cache_subdir, 'shd_train.h5'), 'r'
-)
-test_file = h5py.File(
-    os.path.join(cache_dir, cache_subdir, 'shd_test.h5'), 'r'
-)
-
-x_train = train_file['spikes']
-y_train = train_file['labels']
-x_test = test_file['spikes']
-y_test = test_file['labels']
-
-SWEEP_DURATION = 1.4
-
 
 def sparse_data_generator_from_hdf5_spikes(
     X, y, sweep_duration: float, shuffle=True,
@@ -307,6 +322,7 @@ def sparse_data_generator_from_hdf5_spikes(
 
 def main():
     """Run training loop across multiple random seeds in parallel."""
+    get_shd_dataset(CACHE_DIR, CACHE_SUBDIR)
     with mp.Pool(3) as pool:
         pool.map(worker, range(NUM_SEEDS))
 
@@ -329,28 +345,33 @@ def train_networks(
     nets = get_networks()
     optimizers = get_optimizers(nets)
 
-    for label in nets:
-        print(f'Training \"{label}\" - {rep_num}')
-        initial_train_accuracy = classification_accuracy(
-            x_train, y_train, nets[label]
-        )
-        initial_test_accuracy = classification_accuracy(
-            x_test, y_test, nets[label]
-        )
-        optimizers[label].optimize(epochs)
-        final_train_accuracy = classification_accuracy(
-            x_train, y_train, nets[label]
-        )
-        final_test_accuracy = classification_accuracy(
-            x_test, y_test, nets[label]
-        )
-        print(
-            f'Finished training \"{label}\" - {rep_num}; '
-            f'Initial Train Acc. {100 * initial_train_accuracy:.1f}%, '
-            f'Initial Test Acc. {100 * initial_test_accuracy:.1f}%.'
-            f'Final Train Acc. {100 * final_train_accuracy:.1f}%.'
-            f'Final Test Acc. {100 *  final_test_accuracy:.1f}%.'
-        )
+    path_to_train_data = os.path.join(CACHE_DIR, CACHE_SUBDIR, 'shd_train.h5')
+    path_to_test_data = os.path.join(CACHE_DIR, CACHE_SUBDIR, 'shd_test.h5')
+
+    with Data(path_to_train_data, path_to_test_data) as data:
+        for label in nets:
+            print(f'Training \"{label}\" - {rep_num}')
+            initial_train_accuracy = classification_accuracy(
+                data.x_train, data.y_train, nets[label]
+            )
+            initial_test_accuracy = classification_accuracy(
+                data.x_test, data.y_test, nets[label]
+            )
+            optimizers[label].optimize(epochs)
+            final_train_accuracy = classification_accuracy(
+                data.x_train, data.y_train, nets[label]
+            )
+            final_test_accuracy = classification_accuracy(
+                data.x_test, data.y_test, nets[label]
+            )
+
+            print(
+                f'Finished training \"{label}\" - {rep_num}; '
+                f'Initial Train Acc. {100 * initial_train_accuracy:.1f}%, '
+                f'Initial Test Acc. {100 * initial_test_accuracy:.1f}%.'
+                f'Final Train Acc. {100 * final_train_accuracy:.1f}%.'
+                f'Final Test Acc. {100 *  final_test_accuracy:.1f}%.'
+            )
 
     return nets, optimizers
 
