@@ -71,6 +71,8 @@ class Data:
         self.x_test = self._test_file['spikes']
         self.y_test = self._test_file['labels']
 
+        return self
+
     def __exit__(self, *err_args):
         self._train_file.close()
         self._test_file.close()
