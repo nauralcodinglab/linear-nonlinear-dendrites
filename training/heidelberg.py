@@ -387,7 +387,9 @@ def train_networks(
             initial_test_accuracy = classification_accuracy(
                 data.x_test, data.y_test, nets[label]
             )
-            optimizers[label].optimize(epochs)
+            optimizers[label].optimize(
+                data.x_train, data.y_train, epochs, 'none'
+            )
             final_train_accuracy = classification_accuracy(
                 data.x_train, data.y_train, nets[label]
             )
