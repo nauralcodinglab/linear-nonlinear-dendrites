@@ -62,6 +62,14 @@ class Data:
         self.y_test: Optional[h5py.Dataset] = None
 
     def __enter__(self):
+        self.open()
+        return self
+
+    def __exit__(self, *err_args):
+        self.close()
+
+    def open(self):
+        """Open connections to the training and test data files."""
         self._train_file = h5py.File(self._path_to_train, 'r')
         self.x_train = self._train_file['spikes']
         self.y_train = self._train_file['labels']
@@ -70,14 +78,12 @@ class Data:
         self.x_test = self._test_file['spikes']
         self.y_test = self._test_file['labels']
 
-        return self
-
-    def __exit__(self, *err_args):
+    def close(self):
+        """Close connections to training and test data files."""
         self._train_file.close()
         self._test_file.close()
         for a, b in itertools.product(['x', 'y'], ['train', 'test']):
             setattr(self, '_'.join((a, b)), None)
-
 
 class DefaultOptimizer:
     def __init__(self, forward_fn, params):
