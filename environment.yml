@@ -1,4 +1,4 @@
-name: teaching
+name: lnldendrites
 channels:
   - defaults
 dependencies:
@@ -139,4 +139,4 @@ dependencies:
     - numba==0.52.0
     - quantities==0.12.4
     - typeguard==2.10.0
-prefix: /opt/miniconda3/envs/teaching
+prefix: /opt/miniconda3/envs/lnldendrites

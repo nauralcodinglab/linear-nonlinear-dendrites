@@ -1,4 +1,10 @@
 #!/usr/bin/env python
+"""Train multiple networks to recognize spoken digits.
+
+Some code is modified from Friedemann Zenke's
+SpyTorch (https://doi.org/10.5281/zenodo.3724018).
+
+"""
 import os
 from copy import deepcopy
 from typing import Tuple, Dict, Optional

@@ -4,6 +4,9 @@
 This script runs the task from SpyTorch tutorial 1 over multiple random
 datasets and initial weights.
 
+Some code is modified from Friedemann Zenke's
+SpyTorch (https://doi.org/10.5281/zenodo.3724018).
+
 """
 from typing import Tuple, Dict
 from copy import deepcopy

@@ -1,4 +1,34 @@
-# Installation
+# Linear-nonlinear dendrites
+
+Neurons are very complicated computational devices, incorporating numerous
+non-linear processes, particularly in their dendrites. A simple way to capture
+the complexities of real neuron computation is with models based on a cascade of
+linear-nonlinear operations.
+
+The scripts in this repo demonstrate how models based on parallel and looped
+linear-nonlinear operations, which we call parallel and recurrent cascade (PRC)
+models, can capture important features of real neurons.
+
+For more information, see
+[our paper](https://doi.org/10.1101/2021.03.25.437091):
+
+> Harkin&ast;, Shen&ast;, Goel, Richards&ast;&ast;, and Naud&ast;&ast;. Parallel
+> and recurrent cascade models as a unifying force for understanding
+> sub-cellular computation. bioRxiv, 2021. doi: 10.1101/2021.03.25.437091.
+>
+> &ast; These authors contributed equally.
+>
+> &ast;&ast; These authors also contributed equally.
+
+## Contents
+
+- `demos`: Demonstrations of various aspects of PRC neuron models corresponding
+  to figures 3-6 of Harkin, Shen, *et al*. (2021).
+- `training`: Scripts that illustrate training of multi-layered neural networks
+  containing PRC models using backprop. Corresponds to figures 7 and 8 of
+  Harkin, Shen, *et al*. (2021).
+
+## Installation
 
 To download the code and all dependencies, paste the following
 into a terminal. Make sure you have Anaconda installed, since it
@@ -11,46 +41,58 @@ git clone --recurse-submodules \
     https://github.com/nauralcodinglab/linear-nonlinear-dendrites.git \
     && cd linear-nonlinear-dendrites \
     && conda env create -f environment.yml \
-    && conda activate teaching \
+    && conda activate lnldendrites \
     && pip install -e ./ez-ephys
 ```
 
-# Minimal workflow
-
-When you want to start work, run `git pull && conda activate
-teaching && jupyter notebook` to fetch updates from github and
-start jupyter in your web browser.
-
-When you're finished, run `git commit -am "Short description of
-changes" && git push origin master` to publish your changes to
-github.
-
-# Troubleshooting
-
-## Git pull doesn't work
-
-**Problem:** git pull produces a message like "local branch master and upstream
-origin/master have diverged" or "unable to fast-forward".
-
-**Cause:** You've made commits since your last git pull, and someone else has
-pushed changes to the same branch since then.
-
-**Solution:** Merge your commits into the upstream (GitHub) version. Running
-the following two commands in a terminal will fix this automatically most of
-the time.
+If installation of the conda environment fails, try creating an empty conda
+environment and installing the minimal requirements from `requirements.txt`
+instead.
 
 ```sh
-git commit -am "Commit everything before merge" \
-    && git checkout -b local-version \
-    && git reset --hard origin/master \
-    && git merge local-version
+# Run from inside linear-nonlinear-dendrites repo
+conda create -n lnldendrites python=3.8 \
+    && conda activate lnldendrites \
+    && pip install -r requirements.txt \
+    && pip install -e ./ez-ephys
 ```
 
-If the above command produces warnings about merge conflicts, you have to fix
-them by editing the affected files manually and committing the result before
-running the next commant.
 
-```sh
-git push origin master \
-    && git branch -d local-version
+## Requirements
+
+This project requires Python version 3.5 or newer because of type hints. Minimal
+dependencies are listed in `requirements.txt`.
+
+Most scripts have been tested on MacOS v10.15 and Manjaro Linux v20 and v21
+using Python 3.8 or newer. Scripts for training networks of PRC neurons have
+been tested on CentOS.
+
+
+## Contributors
+
+Code was written by Emerson Harkin, Peter Shen, Richard Naud, and Anish Goel.
+Parts of the code used for training networks of PRC neurons (under `training`)
+are modified or reproduced from Friedeman Zenke's SpyTorch
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.3724018.svg)](https://doi.org/10.5281/zenodo.3724018).
+
+
+## License
+
+If you use this code in a publication, please cite our paper!
+
 ```
+@article{harkin_parallel_2021,
+	title = {Parallel and recurrent cascade models as a unifying force for understanding sub-cellular computation},
+	doi = {10.1101/2021.03.25.437091},
+	journaltitle = {{bioRxiv}},
+	author = {Harkin, Emerson F and Shen, Peter R and Goel, Anish and Richards, Blake A and Naud, Richard},
+	date = {2021},
+	langid = {english},
+}
+```
+
+<a rel="license" href="http://creativecommons.org/licenses/by/4.0/"><img alt="Creative Commons License" style="border-width:0" src="https://i.creativecommons.org/l/by/4.0/88x31.png" /></a><br />This work is licensed under a <a rel="license" href="http://creativecommons.org/licenses/by/4.0/">Creative Commons Attribution 4.0 International License</a>.
+
+This software is provided "as-is" in the spirit of the
+[CRAPL](https://matt.might.net/articles/crapl/CRAPL-LICENSE.txt)
+academic-strength open-source license.
