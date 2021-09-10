@@ -23,6 +23,8 @@ The scripts in this repo demonstrate how models based on parallel and looped
 linear-nonlinear operations, which we call parallel and recurrent cascade (PRC)
 models, can capture important features of real neurons.
 
+![Parallel, recurrent cascade models](prc-dendrites.png)
+
 For more information, see
 [our paper](https://doi.org/10.1101/2021.03.25.437091):
 
